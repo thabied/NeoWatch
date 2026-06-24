@@ -439,12 +439,28 @@ sanitisation.
    right action at 70/85/95%.
 
 ### Verification checklist
-- [ ] Off-topic query (e.g. "best pizza recipe") is rejected with a clear reason.
-- [ ] Injection strings are caught by `sanitise.detect_injection`.
-- [ ] A report number deviating >5% from grounding is flagged, not removed.
-- [ ] Compression fires at 85% and reduces `tokens_used` (assert before/after).
-- [ ] No secret or email appears in logs (regression check).
-- [ ] `mypy src/neowatch/guardrails` and `ruff check` pass clean.
+- [x] Off-topic query (e.g. "best pizza recipe") is rejected with a clear reason
+  (`test_off_topic_query_rejected`; FakeAnthropic returns NO).
+- [x] Injection strings are caught by `sanitise.detect_injection`
+  (`test_detect_injection_patterns`, and `test_injection_rejected_before_model`
+  proves it short-circuits *before* the paid Haiku call — `fake.messages.calls == 0`).
+- [x] A report number deviating >5% from grounding is flagged, not removed
+  (`test_inflated_number_is_flagged_with_pct_diff`: 18 LD vs 12 LD → `pct_diff == 50.0`).
+- [x] Compression fires at 85% and reduces `tokens_used` (assert before/after)
+  (`test_compress_threshold_reduces_tokens`).
+- [x] No secret or email appears in logs (regression check) — already enforced by
+  `strip_secrets` (API-key + email regex); `test_strip_secrets_redacts_email`.
+- [x] `mypy src/` (49 files) and `ruff check` pass clean. **65/65 unit tests** (+18).
+
+> **Design note — where the LLM lives.** Guardrail classes own any paid call (the
+> Haiku YES/NO domain classifier; the Haiku history summariser), while the data
+> model stays pure: `AgentContext.compress_history(summary)` does the structural
+> rewrite with the summary *handed in*, so it has zero LLM dependency and is
+> trivially unit-testable. The `FactCheckLayer` is fully deterministic (regex), and
+> matches each number to grounding **by unit** (`18 LD` is checked against LD
+> values, never against a coincidentally-close `18.1 km/s`). Order in
+> `DomainGuardrail.validate` is cheapest-first — length → injection → harm (all
+> free) gate the one paid domain check, which gates the whole pipeline.
 
 ---
 

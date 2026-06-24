@@ -12,6 +12,67 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-24 — Phase 5 (Guardrails and safety) — COMPLETE
+
+**Files:** `src/neowatch/guardrails/{models,sanitise,domain,factcheck,token_budget}.py`;
+`src/neowatch/context.py` (compress_history); `src/neowatch/guardrails/__init__.py`;
+`tests/unit/{test_domain_guardrail,test_factcheck,test_token_budget}.py`;
+updated `tests/unit/test_context.py`.
+
+### What
+Three protective layers around the agents. **Input** — `DomainGuardrail.validate`
+runs four checks cheapest-first (length → injection → harm → a Haiku YES/NO domain
+classification) and rejects bad queries before the pipeline spends anything.
+**Output** — `FactCheckLayer` extracts `<number> <unit>` claims from generated prose
+and flags any that don't match the trusted computed figures within 5%. **Budget** —
+`TokenBudgetGuardrail` warns at 70%, compresses history at 85% (Haiku summarises old
+turns), hard-stops at 95%.
+
+### Why
+Phase 4 made the system *reason*; Phase 5 makes it *trustworthy and affordable*.
+Each layer maps to a real risk: off-topic/malicious input (waste + abuse),
+hallucinated numbers (the classic LLM failure), and runaway context (cost). These
+are the difference between a demo and something you'd let touch a budget.
+
+### Key lessons
+- **Fail fast and cheap.** The three free checks (pure Python/regex) gate the one
+  paid check (Haiku domain classifier), which gates the whole expensive pipeline.
+  A pizza-recipe query or an injection string is rejected for *zero* tokens — a test
+  asserts `fake.messages.calls == 0` to prove the model was never consulted.
+- **Anti-hallucination by verification, matched *by unit*.** We don't trust the
+  model's numbers; we check them against figures we computed ourselves. The subtle
+  bit: a hallucinated `18 LD` sits right next to a real `18.1 km/s`, so matching to
+  the "nearest number overall" would wave it through. Pinning each claim to its unit
+  (LD vs km/s) keeps the check honest. Claims are *flagged, never deleted* —
+  confidence is surfaced to the user, not silently rewritten.
+- **Keep the LLM out of the data model.** Compression needs a summary (an LLM call)
+  *and* a structural rewrite. We split them: the guardrail owns the paid Haiku call;
+  `AgentContext.compress_history(summary)` takes the finished summary and does a pure
+  list rewrite. Result: the context model has zero Anthropic dependency and is
+  trivially unit-testable, while the paid call stays in the guardrail where the
+  budget logic lives.
+- **Layered, not airtight.** `detect_injection` is a heuristic that catches known
+  phrasings, not a proof. Combined with the domain classifier and the output
+  fact-check, it *raises the cost of an attack* without pretending to be unbreakable
+  — the honest framing for security work.
+
+### Gotchas
+- A Phase 1 test asserted `compress_history` raised `NotImplementedError`; finishing
+  the feature meant updating that test (a healthy sign the contract was real from the
+  start, not invented late).
+- The verification checklist's "compression reduces `tokens_used`" forced a decision:
+  `tokens_used` is re-baselined to the *compressed* footprint after summarising,
+  modelling current-context occupancy (what the next call will carry), not a
+  monotonic lifetime counter.
+- Step 6 ("mask emails in logs") was already satisfied — `strip_secrets` (Phase 1)
+  always carried the email regex. Verified by a regression test rather than rebuilt.
+
+### Verification
+`ruff` clean · `mypy src/` clean (49 files) · **65/65 unit tests** (+18 this phase),
+all offline via `FakeAnthropic` — zero paid API calls.
+
+---
+
 ## 2026-06-23 — Phase 4 (Agent system) — COMPLETE
 
 **Files:** `src/neowatch/calc/{models,orbital}.py`;

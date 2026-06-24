@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from neowatch.context import AgentContext, AgentResult
 
 
@@ -25,11 +23,18 @@ def test_add_tokens_accumulates() -> None:
     assert ctx.tokens_used == 150
 
 
-def test_compress_history_not_yet_implemented() -> None:
-    """Compression is a Phase 5 feature; the contract exists but raises for now."""
-    ctx = AgentContext(query="x")
-    with pytest.raises(NotImplementedError):
-        ctx.compress_history()
+def test_compress_history_collapses_old_turns() -> None:
+    """compress_history (Phase 5) replaces old turns with a summary, keeping the latest."""
+    ctx = AgentContext(
+        query="x",
+        history=[{"role": "user", "content": f"turn {i}"} for i in range(5)],
+    )
+    collapsed = ctx.compress_history("a short summary", keep_last=2)
+    assert collapsed == 3
+    assert len(ctx.history) == 3  # 1 summary + last 2
+    assert ctx.history[0]["role"] == "system"
+    assert "a short summary" in ctx.history[0]["content"]
+    assert ctx.history[-1]["content"] == "turn 4"
 
 
 def test_agent_result_shape() -> None:

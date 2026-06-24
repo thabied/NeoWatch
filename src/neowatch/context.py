@@ -57,14 +57,29 @@ class AgentContext(BaseModel):
         """
         self.tokens_used += count
 
-    def compress_history(self) -> None:
-        """Summarise older turns to free up context budget.
+    def compress_history(self, summary: str, keep_last: int = 3) -> int:
+        """Replace older turns with a single summary turn, keeping the latest few.
 
-        Real summarisation (via Haiku) lands in Phase 5 alongside the
-        ``TokenBudgetGuardrail``; defined here so the contract exists from the
-        start.
+        This is a *pure data operation*: it does not call any model. The summary
+        text is produced by the ``TokenBudgetGuardrail`` (which owns the Haiku
+        call) and handed in here, so the context model stays free of LLM
+        dependencies and is trivial to unit-test.
 
-        Raises:
-            NotImplementedError: Until Phase 5 implements compression.
+        Args:
+            summary: A short summary of the turns being compressed away.
+            keep_last: How many of the most recent turns to retain verbatim.
+
+        Returns:
+            The number of turns that were collapsed into the summary (0 if the
+            history was already short enough to leave untouched).
         """
-        raise NotImplementedError("History compression is implemented in Phase 5.")
+        if len(self.history) <= keep_last:
+            return 0
+        old = self.history[:-keep_last] if keep_last else self.history
+        recent = self.history[-keep_last:] if keep_last else []
+        summary_turn: dict[str, Any] = {
+            "role": "system",
+            "content": f"[Summary of {len(old)} earlier turns] {summary}",
+        }
+        self.history = [summary_turn, *recent]
+        return len(old)
