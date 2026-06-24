@@ -1,0 +1,48 @@
+# pyproject.toml — the single config hub for the package build + dev tooling.
+# (Runtime dependencies live in requirements.txt per the spec; this file declares
+#  the package itself and configures ruff / mypy / pytest.)
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "neowatch"
+version = "0.1.0"
+description = "Agentic Near-Earth Object (NEO) research system."
+requires-python = ">=3.12"
+
+# "src layout": tell setuptools the importable packages live under src/.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# --- Linter / formatter ------------------------------------------------------
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# E/W = pycodestyle, F = pyflakes, I = isort (import order),
+# UP = pyupgrade (modern syntax), B = bugbear (likely bugs).
+select = ["E", "W", "F", "I", "UP", "B"]
+
+# --- Static type checker -----------------------------------------------------
+[tool.mypy]
+python_version = "3.12"
+strict = true                      # the strongest set of safety checks
+plugins = ["pydantic.mypy"]        # teaches mypy about Pydantic models
+mypy_path = "src"
+
+# These third-party libs ship no (complete) type stubs; allow the untyped
+# imports without weakening strict checks on our own code.
+[[tool.mypy.overrides]]
+module = ["feedparser.*", "chromadb.*", "nltk.*", "rank_bm25.*"]
+ignore_missing_imports = true
+
+# --- Test runner -------------------------------------------------------------
+[tool.pytest.ini_options]
+asyncio_mode = "auto"              # treat async test functions as coroutines automatically
+testpaths = ["tests"]
+markers = [
+    "integration: tests that hit live APIs; skipped unless keys are present",
+]

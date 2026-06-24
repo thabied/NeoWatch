@@ -1,0 +1,16 @@
+[
+  {
+    "flrID": "2024-01-01T00:00:00-FLR-001",
+    "beginTime": "2024-01-01T00:00Z",
+    "peakTime": "2024-01-01T00:30Z",
+    "classType": "M1.5",
+    "sourceLocation": "N12E30"
+  },
+  {
+    "flrID": "2024-01-02T00:00:00-FLR-001",
+    "beginTime": "2024-01-02T00:00Z",
+    "peakTime": "2024-01-02T01:10Z",
+    "classType": "X2.0",
+    "sourceLocation": "S10W20"
+  }
+]

@@ -1,0 +1,13 @@
+{
+  "object": {
+    "fullname": "433 Eros (A898 PA)",
+    "neo": true,
+    "pha": false,
+    "des": "433",
+    "orbit_class": {"name": "Amor", "code": "AMO"}
+  },
+  "phys_par": [
+    {"name": "H", "value": "10.31", "title": "absolute magnitude", "units": null},
+    {"name": "diameter", "value": "16.84", "title": "diameter", "units": "km"}
+  ]
+}

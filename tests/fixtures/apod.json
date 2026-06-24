@@ -1,0 +1,9 @@
+{
+  "date": "2024-01-01",
+  "explanation": "A sample explanation of the day's astronomy picture.",
+  "hdurl": "https://apod.nasa.gov/apod/image/2401/sample_hd.jpg",
+  "media_type": "image",
+  "service_version": "v1",
+  "title": "A Sample Astronomy Picture",
+  "url": "https://apod.nasa.gov/apod/image/2401/sample.jpg"
+}

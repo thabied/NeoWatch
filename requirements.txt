@@ -1,0 +1,47 @@
+# NeoWatch dependencies (pinned to minimum versions per PROJECT_SPEC.md §9).
+# Install into a Python 3.12 virtual environment (3.12 chosen so the Intel-Mac
+# x86_64 torch / sentence-transformers stack has wheels; 3.13 had none):
+#   python3.12 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# --- Core AI ---
+anthropic>=0.40.0          # Claude API client (all agents)
+pydantic>=2.7.0            # typed data models / validation
+pydantic-settings>=2.3.0   # load config + secrets from .env
+
+# --- RAG (retrieval-augmented generation) ---
+chromadb>=0.5.0            # local vector DB + built-in ONNX all-MiniLM-L6-v2 embeddings
+rank-bm25>=0.2.2           # keyword re-ranking (second-stage retrieval)
+feedparser>=6.0.11         # parse arXiv Atom XML feeds
+nltk>=3.8.1               # sentence tokenisation for chunking
+# NOTE: embeddings use ChromaDB's built-in ONNX all-MiniLM-L6-v2 (onnxruntime),
+# NOT sentence-transformers/torch. torch has no Intel-Mac (x86_64) wheel past
+# 2.2.2, and that pins an incompatible numpy/transformers stack. ONNX gives the
+# SAME model with far fewer deps. See docs/RETRIEVAL_CONCEPTS.md and embed.py.
+
+# --- HTTP ---
+httpx>=0.27.0             # async HTTP client for all API calls
+
+# --- Data science ---
+numpy>=1.26.0             # numerics for orbital calculations
+scipy>=1.13.0             # scientific computing (risk/anomaly maths)
+pandas>=2.2.0            # tabular handling (risk table)
+matplotlib>=3.9.0        # plotting
+plotly>=5.22.0           # interactive charts
+
+# --- Image processing ---
+pillow>=10.3.0           # validate/resize NASA APOD images
+
+# --- UI ---
+gradio>=4.36.0           # web front-end
+
+# --- Resilience ---
+tenacity>=8.3.0          # retry with exponential backoff
+
+# --- Dev tools ---
+structlog>=24.1.0        # structured logging
+python-dotenv>=1.0.1     # .env loading support
+pytest>=8.2.0            # test runner
+pytest-asyncio>=0.23.0   # async test support
+mypy>=1.10.0             # static type checking
+ruff>=0.4.0              # linting / formatting
