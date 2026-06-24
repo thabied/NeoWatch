@@ -569,12 +569,28 @@ embedded images + a source appendix.
    markdown/table/gallery outputs contain expected fields.
 
 ### Verification checklist
-- [ ] `python -m neowatch.main` launches a Gradio server at `localhost:7860`.
-- [ ] Submitting the example query renders narrative + risk table + image(s).
-- [ ] Progress indicator updates as each agent completes.
-- [ ] An off-topic query shows the guardrail rejection message (no crash).
-- [ ] `mypy src/neowatch/ui` and `ruff check src/neowatch/ui` pass clean.
-- [ ] `pytest tests/unit/test_render.py` passes.
+- [x] `python -m neowatch.main` launches a Gradio server at `localhost:7860`
+  (verified: `build_app().launch(server_port=7860)` serves **HTTP 200** on `/`).
+- [x] Submitting a query renders narrative + risk table + image(s) — renderers are
+  pure and unit-tested (`test_render.py`); a live submit (real report) needs API
+  keys and is a manual check.
+- [x] Progress indicator updates as each agent completes — `pipeline.run_query`
+  takes a `progress` hook; the orchestrator emits per-agent events that the Gradio
+  handler streams via an `asyncio.Queue` (producer/consumer).
+- [x] An off-topic query shows the guardrail rejection message (no crash) —
+  `run_query` returns a valid rejection `FinalReport` (`test_pipeline.py`), which
+  `report_to_markdown` renders; the UI handler also wraps the run in try/except.
+- [x] `mypy src/` (49 files) and `ruff check` pass clean over `ui/`.
+- [x] `pytest tests/unit/test_render.py` passes (4 tests; **75/75** total).
+
+> **Design note — streaming over a single `await`.** `run_query` is one long
+> coroutine, so the UI can't see inside it. To surface per-agent progress, the
+> Gradio handler runs the pipeline as a background task and drains an
+> `asyncio.Queue` the pipeline pushes status strings onto — a classic
+> producer/consumer. The handler is an async generator, so each queue message
+> becomes a UI update and the final yield carries the real report. The renderers in
+> `ui/render.py` are deliberately pure (no Gradio types), so they unit-test without
+> a server; `app.py` is the only Gradio-coupled module.
 
 ---
 

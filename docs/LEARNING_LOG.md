@@ -12,6 +12,59 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-24 — Phase 7 (Gradio UI) — COMPLETE
+
+**Files:** `src/neowatch/ui/{render,app}.py`; `src/neowatch/main.py` (launches the
+UI); `src/neowatch/context.py` (`ProgressCallback`); `pipeline.py` +
+`agents/{orchestrator,synthesis_agent}.py` (progress hook); `tests/unit/test_render.py`.
+
+### What
+The first phase you can *click*. A Gradio `Blocks` app: a query box, a risk
+dataframe, a markdown report pane, and an image gallery. Submitting a query runs
+`pipeline.run_query` and streams per-agent progress, then renders the `FinalReport`.
+
+### Why
+Everything before this was code and tests; Phase 7 makes it a product a person can
+use. It also forces the report schema to prove itself — if `FinalReport` were
+awkward to display, we'd feel it here. (It wasn't: pure renderers map it straight
+onto widgets.)
+
+### Key lessons
+- **Pure renderers vs. the framework shell.** `ui/render.py` turns a `FinalReport`
+  into a markdown string, a pandas DataFrame, and a gallery list — all *pure
+  functions with no Gradio imports*. So they unit-test without launching a server
+  (4 fast tests). `app.py` is the only module that touches Gradio. Same separation
+  lesson as deterministic-core/LLM-shell, applied to UI: keep the testable logic
+  away from the hard-to-test framework boundary.
+- **Streaming over a single `await` (producer/consumer).** `run_query` is one long
+  coroutine — the UI can't peek inside it. The fix: run the pipeline as a background
+  `asyncio.create_task`, and have it push status strings onto an `asyncio.Queue`
+  (via an optional `progress` callback threaded down to the orchestrator). The
+  Gradio handler is an *async generator* that drains the queue, yielding a UI
+  update per message, then yields the finished report last. This is the standard
+  way to get progress out of an opaque async call.
+- **Optional hooks keep layers decoupled.** The `progress` callback is `None`
+  everywhere by default, so the pipeline stays headless and testable; only the UI
+  passes a real callback. The front-end depends on the pipeline, never the reverse.
+- **Degrade in the UI too.** The handler wraps the run in try/except and shows
+  errors in the status pane; an off-topic query renders the guardrail's rejection
+  `FinalReport` like any other report. No traceback ever reaches the user.
+
+### Gotchas
+- **mypy + third-party types.** pandas needs `pandas-stubs`; gradio *is* typed but
+  its `with gr.Blocks() as demo` yields `Any`. Added `pandas.*`/`gradio.*` to the
+  mypy `ignore_missing_imports` override, and `cast`-ed the `Blocks` return so
+  `--strict` stays honest without weakening checks on our own code.
+- Gradio installed as **6.19** (newer than the plan's 4.36); the `Blocks` /
+  `Dataframe` / `Gallery` API used here is stable across that gap.
+
+### Verification
+`ruff` clean · `mypy src/` clean (49 files) · **75/75 unit tests** (+4). Launched
+the server for real: `build_app().launch(server_port=7860)` serves **HTTP 200** on
+`/`. A full live query (real report in the browser) needs API keys — a manual check.
+
+---
+
 ## 2026-06-24 — Phase 6 (Orchestrator and synthesis) — COMPLETE
 
 **Files:** `src/neowatch/prompts/system_prompts.py`;

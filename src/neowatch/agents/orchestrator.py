@@ -27,7 +27,7 @@ from anthropic.types import MessageParam, ToolParam
 from structlog.typing import FilteringBoundLogger
 
 from ..config import Settings
-from ..context import AgentContext, AgentResult
+from ..context import AgentContext, AgentResult, ProgressCallback
 from ..guardrails.domain import DomainGuardrail
 from ..guardrails.token_budget import TokenBudgetGuardrail
 from ..llm import get_anthropic_client
@@ -80,9 +80,11 @@ class OrchestratorAgent(BaseAgent):
         calc_agent: BaseAgent | None = None,
         rag_agent: BaseAgent | None = None,
         image_agent: BaseAgent | None = None,
+        progress: ProgressCallback | None = None,
     ) -> None:
         super().__init__(settings, logger)
         self.client = client
+        self.progress = progress
         # Agents are injectable so tests can supply offline stubs; otherwise the
         # real specialists are built (sharing the injected client where they use
         # one, so a test's FakeAnthropic flows all the way down).
@@ -102,9 +104,11 @@ class OrchestratorAgent(BaseAgent):
         tool-names that were invoked (useful for assertions and logging). On a
         guardrail rejection, ``success`` is False and ``error`` holds the reason.
         """
+        self._emit("Validating query…")
         verdict = await self.domain_guardrail.validate(context.query, context)
         if not verdict.allowed:
             self.logger.info("orchestrator.rejected", reason=verdict.reason)
+            self._emit("Query rejected by guardrail.")
             return AgentResult(agent_name="OrchestratorAgent", success=False, error=verdict.reason)
 
         anthropic = self.client or get_anthropic_client(self.settings)
@@ -150,6 +154,7 @@ class OrchestratorAgent(BaseAgent):
         if agent is None:
             return f"Unknown tool {tool_name}."
 
+        self._emit(f"Running {tool_name}…")
         result = await self._run_with_retry(agent, context)
         invoked.append(tool_name)
         if not result.success:
@@ -170,6 +175,11 @@ class OrchestratorAgent(BaseAgent):
             context.session_cache["images"] = result.data
             return f"Prepared {len(result.data)} images."
         return "Done."
+
+    def _emit(self, message: str) -> None:
+        """Send a progress update to the UI hook, if one is attached."""
+        if self.progress is not None:
+            self.progress(message)
 
     async def _run_with_retry(
         self, agent: BaseAgent, context: AgentContext, attempts: int = 2

@@ -11,9 +11,15 @@ token-budget tracking and history compression hook in.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel, Field
+
+# A UI progress hook: agents call it with a short human status string as they
+# complete work. Optional everywhere (None = headless), so it never couples the
+# pipeline to the front-end.
+ProgressCallback = Callable[[str], None]
 
 
 class AgentResult(BaseModel):

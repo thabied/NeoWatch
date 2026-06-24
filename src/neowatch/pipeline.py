@@ -20,7 +20,7 @@ from .agents.models import FinalReport
 from .agents.orchestrator import OrchestratorAgent
 from .agents.synthesis_agent import SynthesisAgent
 from .config import Settings, get_settings
-from .context import AgentContext
+from .context import AgentContext, ProgressCallback
 
 
 async def run_query(
@@ -28,6 +28,7 @@ async def run_query(
     settings: Settings | None = None,
     client: AsyncAnthropic | None = None,
     logger: FilteringBoundLogger | None = None,
+    progress: ProgressCallback | None = None,
 ) -> FinalReport:
     """Run one query end-to-end and return a validated ``FinalReport``.
 
@@ -36,6 +37,8 @@ async def run_query(
         settings: Optional settings override (defaults to the cached singleton).
         client: Optional injected Anthropic client (a fake in tests).
         logger: Optional structlog logger.
+        progress: Optional UI hook called with a status string as each stage
+            completes (used by the Gradio front-end to stream progress).
 
     Returns:
         A ``FinalReport``. If the guardrail rejects the query, the report carries
@@ -45,12 +48,12 @@ async def run_query(
     settings = settings or get_settings()
     context = AgentContext(query=query)
 
-    orchestrator = OrchestratorAgent(settings, logger=logger, client=client)
+    orchestrator = OrchestratorAgent(settings, logger=logger, client=client, progress=progress)
     plan = await orchestrator.run(context)
     if not plan.success:
         return _rejection_report(query, plan.error or "Query was rejected.")
 
-    synthesis = SynthesisAgent(settings, logger=logger, client=client)
+    synthesis = SynthesisAgent(settings, logger=logger, client=client, progress=progress)
     result = await synthesis.run(context)
     report = result.data
     assert isinstance(report, FinalReport)  # SynthesisAgent always returns one

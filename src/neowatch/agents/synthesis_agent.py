@@ -24,7 +24,7 @@ from structlog.typing import FilteringBoundLogger
 
 from ..calc.models import OrbitalReport, RiskAssessment
 from ..config import Settings
-from ..context import AgentContext, AgentResult
+from ..context import AgentContext, AgentResult, ProgressCallback
 from ..guardrails.factcheck import FactCheckLayer, build_grounding_context
 from ..llm import get_anthropic_client
 from ..prompts.system_prompts import SYNTHESIS_V1, SYNTHESIS_VERSION
@@ -50,12 +50,16 @@ class SynthesisAgent(BaseAgent):
         settings: Settings,
         logger: FilteringBoundLogger | None = None,
         client: AsyncAnthropic | None = None,
+        progress: ProgressCallback | None = None,
     ) -> None:
         super().__init__(settings, logger)
         self.client = client
+        self.progress = progress
 
     async def run(self, context: AgentContext) -> AgentResult:
         """Build a ``FinalReport`` from the blackboard, then verify its numbers."""
+        if self.progress is not None:
+            self.progress("Writing report…")
         orbital = context.session_cache.get("orbital_report")
         orbital = orbital if isinstance(orbital, OrbitalReport) else OrbitalReport()
         papers = _as_papers(context.session_cache.get("papers"))
