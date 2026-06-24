@@ -630,13 +630,25 @@ setup/run/deploy instructions, and a demo capture.
 8. **`DEMO.md`**: capture a run of the example query; embed gif/screenshots.
 
 ### Verification checklist
-- [ ] `pytest tests/ -v --tb=short` → all non-integration tests pass.
-- [ ] `mypy src/` and `ruff check src/ tests/` → clean across the repo.
-- [ ] `docker build -t neowatch .` succeeds and `docker run` launches the UI.
-- [ ] HF Spaces deploy: `app.py` + `requirements.txt` at root; secrets documented.
-- [ ] README enables a new dev to go from clone → running UI without extra help.
-- [ ] ChromaDB re-ingests cleanly on a fresh container start (no persistence assumed).
-- [ ] Demo artifact (gif/screenshots) committed under `docs/`.
+- [x] `pytest tests/ -v` → all non-integration tests pass (**76**, incl. the offline
+  `tests/integration/test_smoke.py`; live integration tests skip without keys).
+- [x] `mypy src/` (49 files) and `ruff check src/ tests/` → clean across the repo.
+- [~] `docker build -t neowatch .` — **Dockerfile written & reviewed; not yet built**
+  in this session (the local Docker daemon was not running). `python -m neowatch.main`
+  is verified to serve HTTP 200, and the image is standard `python:3.12-slim` +
+  `requirements.txt` + `pip install -e .`. Run `docker build -t neowatch .` once
+  Docker Desktop is up to tick this.
+- [x] HF Spaces deploy: `app.py` + `requirements.txt` at root; secrets documented in
+  the README ("Deploy to HuggingFace Spaces").
+- [x] README enables clone → running UI (setup, env vars, run, test, Docker, deploy).
+- [x] ChromaDB re-ingests cleanly on a fresh start — no volume assumed; `.dockerignore`
+  excludes `.chroma/`, and `RAGAgent` ingests when the store `is_stale()`.
+- [~] Demo artifact — `docs/DEMO.md` placeholder with capture instructions committed;
+  the GIF/screenshots need a live keyed run in a browser (manual).
+
+> **Deviations from spec, noted:** base image is `python:3.12-slim` (not 3.11) to
+> match `requires-python = ">=3.12"`; added `libgomp1` for onnxruntime; set
+> `GRADIO_SERVER_NAME=0.0.0.0` so the UI is reachable inside the container.
 
 ---
 

@@ -1,0 +1,26 @@
+# Keep the build context small and never ship secrets or local state.
+.env
+*.env
+!.env.example
+
+.venv/
+venv/
+env/
+
+.chroma/
+.image_cache/
+*.log
+
+.git/
+.github/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+tests/
+docs/
+.claude/
+.DS_Store

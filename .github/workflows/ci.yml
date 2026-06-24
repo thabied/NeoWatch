@@ -1,0 +1,36 @@
+name: CI
+
+# Lint, type-check, and run the offline unit tests on every push and PR.
+# Integration tests are skipped here (they need live API keys + network); they
+# run deliberately with NEOWATCH_RUN_INTEGRATION=1 locally.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Ruff (lint)
+        run: ruff check src/ tests/
+
+      - name: Mypy (type-check)
+        run: mypy src/
+
+      - name: Pytest (unit + offline smoke)
+        run: pytest tests/unit tests/integration/test_smoke.py -q

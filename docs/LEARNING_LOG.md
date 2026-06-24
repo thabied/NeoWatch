@@ -12,6 +12,68 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-24 — Phase 8 (Production hardening) — COMPLETE
+
+**Files:** `Dockerfile`, `.dockerignore`, `app.py` (repo root, HF Spaces entry),
+`README.md`, `.github/workflows/ci.yml`, `tests/conftest.py`,
+`tests/integration/test_smoke.py`, `docs/DEMO.md`.
+
+### What
+The shipping layer: a `Dockerfile`, a HuggingFace Spaces entry point, a real
+`README`, CI, shared test fixtures, an offline smoke test, and a demo placeholder.
+Nothing about the system's behaviour changed — this phase makes it *deployable and
+legible to a stranger*.
+
+### Why
+A project that only runs on the author's laptop isn't finished. Phase 8 answers
+"how does someone else run this?" — clone → keys → `docker build` / `Spaces` →
+working UI — and gives the repo a front page that explains the engineering ideas.
+
+### Key lessons
+- **A README is part of the product.** The architecture diagram, the env-var table,
+  and the run/test/deploy commands are what turn a pile of modules into something
+  another person can use. Writing it also pressure-tests the design: the
+  `FinalReport` schema mapped cleanly onto the UI, which is evidence the contract
+  was right.
+- **Layer caching in Docker.** Copy `requirements.txt` and `pip install` *before*
+  copying `src/`, so a code-only change doesn't re-download chromadb/gradio every
+  build. Ordering Dockerfile steps from least- to most-frequently-changed is the
+  whole trick.
+- **No persistence assumed.** The Chroma vector store is re-ingested on first run,
+  so the container needs no volume — and `.dockerignore` excludes `.chroma/`,
+  `.env`, `.venv`, and `tests/` to keep the build context small and secret-free.
+- **Shared fixtures (`conftest.py`).** The repeated "set test env vars + clear the
+  settings cache" dance and a canned `FinalReport` now live in one place, so new
+  tests stay short. pytest discovers `conftest.py` automatically.
+- **Two kinds of "end-to-end".** `test_smoke.py` is an *offline* end-to-end
+  (run_query → render via a fake client, zero cost) that CI runs on every push;
+  `test_end_to_end.py` is the *live* one, gated behind `NEOWATCH_RUN_INTEGRATION`.
+  Cheap wiring-checks run always; expensive truth-checks run on demand.
+
+### Gotchas / honest notes
+- **Base image deviation:** the spec said `python:3.11-slim`, but the code requires
+  3.12 (`requires-python`, numpy 2.x). Used `3.12-slim` and documented why — matching
+  the spec literally would have produced a broken image.
+- **onnxruntime needs `libgomp1`** in slim images; added it via apt.
+- **Docker build not run this session** — the local Docker daemon was down, and I
+  won't auto-launch a GUI app. The Dockerfile is standard and reviewed; one
+  `docker build -t neowatch .` ticks the last box. (I declined to fake a "verified"
+  here — it's marked pending, not done.)
+- The **demo GIF/screenshots** need a live keyed run in a browser; `docs/DEMO.md`
+  holds the capture steps and the slots, honestly marked as a placeholder.
+
+### Verification
+`ruff` clean · `mypy src/` clean (49 files) · **76/76** non-integration tests
+(unit + offline smoke). CI workflow runs the same three gates on every push.
+
+### Project status: all 8 phases complete
+NeoWatch is functionally and structurally done end-to-end — guarded input →
+agentic orchestration → deterministic computation + RAG → grounded, fact-checked
+report → web UI → container/Spaces deploy. Remaining manual ticks: a real
+`docker build` and the demo capture (both need only a running daemon / API keys).
+
+---
+
 ## 2026-06-24 — Phase 7 (Gradio UI) — COMPLETE
 
 **Files:** `src/neowatch/ui/{render,app}.py`; `src/neowatch/main.py` (launches the
