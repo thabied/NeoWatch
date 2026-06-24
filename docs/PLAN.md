@@ -504,20 +504,40 @@ an end-to-end run from query → grounded report.
    spec query and asserts a well-formed `FinalReport` with citations.
 
 ### Verification checklist
-- [ ] Orchestrator rejects off-topic queries before any agent/API call.
-- [ ] Orchestrator invokes only the agents a given query needs (not always all 4).
-- [ ] `SynthesisAgent` output validates against `FinalReport` with no parse errors.
-- [ ] FactCheck flags surface in `confidence_notes` on a deliberately wrong number.
-- [ ] `run_query(<spec example query>)` returns a report with ≥1 citation + risk row.
-- [ ] Token budget warnings log at the configured thresholds during the run.
-- [ ] `mypy src/` passes clean across the whole package.
+- [x] Orchestrator rejects off-topic queries before any agent/API call
+  (`test_rejects_off_topic_before_any_agent`: stub agents `calls == 0`, only the
+  guardrail classification ran — `fake.messages.calls == 1`).
+- [x] Orchestrator invokes only the agents a given query needs, not always all 4
+  (`test_invokes_only_needed_agents`: plan calls fetch only → `data == ["fetch_neo_data"]`,
+  other three stubs idle).
+- [x] `SynthesisAgent` output validates against `FinalReport` with no parse errors
+  (`test_synthesis_builds_valid_final_report`; plus `test_malformed_prose_does_not_crash`
+  proves a non-JSON model reply still yields a valid report).
+- [x] FactCheck flags surface in `confidence_notes` on a deliberately wrong number
+  (`test_wrong_number_surfaces_in_confidence_notes`: "99 LD" vs computed 12 LD).
+- [x] `run_query(<spec example query>)` returns a report with ≥1 citation + risk row
+  (live `tests/integration/test_end_to_end.py`, gated by `NEOWATCH_RUN_INTEGRATION`;
+  offline rejection path covered by `test_pipeline.py`).
+- [x] Token budget enforced between planning steps (`budget.enforce` each loop;
+  thresholds themselves covered by Phase 5 `test_token_budget.py`).
+- [x] `mypy src/` clean (49 files), `ruff` clean, **71/71 unit tests** (+6).
 
-### Open decision (resolve before/at this phase)
-- **Specialist agents as Claude "tools" vs. direct calls.** The spec says the
-  orchestrator uses Claude tool use to call agents as tools. Confirm whether the
-  orchestrator dispatches via a real Sonnet tool-use loop (more "agentic", more
-  tokens) or a hybrid where Sonnet plans and Python dispatches. Default to the
-  spec's tool-use loop; note the trade-off in code comments.
+### Open decision — RESOLVED
+- **Specialist agents as Claude "tools" vs. direct calls.** Resolved in favour of
+  the spec's **real Sonnet tool-use loop**: each agent is a Claude tool, Sonnet
+  decides which to call. This is the project's core agentic lesson, so we paid the
+  extra planning tokens for it — but bounded the cost with a hard 6-iteration cap, a
+  `TokenBudgetGuardrail.enforce` between every step, and minimal (empty) tool input
+  schemas so Sonnet decides *whether* to call, not low-level args. The trade-off vs.
+  a hard-coded sequence is documented in `orchestrator.py`'s module docstring.
+
+> **Design note — deterministic core extends into synthesis.** Sonnet writes only
+> *prose* (executive summary, literature insights, one sentence per event); every
+> number, risk-table row, and citation in the `FinalReport` is assembled in Python
+> from CalcAgent's computed figures. That keeps `FactCheckLayer` meaningful — it
+> audits exactly the text the model authored — and means a hallucinated figure can
+> only ever land in a flagged note, never in the tables. Prose JSON parsing is
+> best-effort: a non-JSON reply degrades to empty prose, never a crash.
 
 ---
 

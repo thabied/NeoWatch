@@ -12,6 +12,72 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-24 — Phase 6 (Orchestrator and synthesis) — COMPLETE
+
+**Files:** `src/neowatch/prompts/system_prompts.py`;
+`src/neowatch/agents/{orchestrator,synthesis_agent}.py`;
+`src/neowatch/agents/models.py` (FinalReport / NEOEventReport / RiskTableRow /
+Citation); `src/neowatch/pipeline.py`;
+`tests/unit/{test_orchestrator,test_synthesis_agent,test_pipeline}.py`;
+`tests/integration/test_end_to_end.py`.
+
+### What
+The capstone that connects everything. The **OrchestratorAgent** (Sonnet) runs the
+domain guardrail, then drives a tool-use loop where each specialist agent (fetch,
+calc, RAG, image) is a Claude *tool* it can choose to call. The **SynthesisAgent**
+(Sonnet) turns the collected outputs into a single validated `FinalReport`, then
+fact-checks it. `pipeline.run_query(query)` is the one entry point the UI will call.
+
+### Why
+Phases 4-5 built capable, safe *parts*; Phase 6 makes them a *system*. The
+orchestrator is the "agentic" core — the LLM decides the plan (which agents, in
+what order) instead of running a fixed script. That's the headline lesson of the
+whole project: tool use lets a model *act*, not just talk.
+
+### Key lessons
+- **Agents-as-tools (the agentic loop, one level up).** Phase 4 used tool use so
+  Haiku could call *NASA APIs*; here Sonnet uses tool use to call *other agents*.
+  Same mechanism (tool schemas → `tool_use` blocks → execute → `tool_result` →
+  loop), one level of abstraction higher. A query about "this week's asteroids"
+  calls fetch+calc; a query about "detection research" calls literature — the plan
+  is data-dependent, and a test proves only the needed agents run.
+- **The cost/agency trade-off, made explicit.** A real tool-use loop spends Sonnet
+  tokens *planning* that a hard-coded `fetch→calc→synthesise` sequence wouldn't. We
+  chose the agentic loop (it's the lesson) but bounded it: a 6-iteration cap, a
+  budget check between every step, and empty tool-input schemas so Sonnet decides
+  *whether* to call, not fiddly arguments. Naming the trade-off out loud is the
+  point — "agentic" is not free.
+- **Deterministic core, all the way to the report.** Same pattern as CalcAgent, now
+  in synthesis: Sonnet writes *only prose* (summary, insights, one line per event);
+  every number, table row, and citation is assembled in Python from the computed
+  figures. So `FactCheckLayer` audits exactly what the model wrote, and a
+  hallucinated "99 LD" can only ever surface as a flagged confidence note — it can
+  never reach the risk table. Verified by a test.
+- **The shared blackboard.** Agents don't call each other; the orchestrator parks
+  each output on `context.session_cache` under known keys (`neo_data`,
+  `orbital_report`, `papers`, `images`) and synthesis reads from there. Loose
+  coupling: any agent can be swapped without the others knowing.
+- **Degrade, don't crash.** The model's prose JSON is parsed best-effort — a
+  non-JSON reply yields empty prose, not an exception, and the deterministic tables
+  still build. A guardrail rejection becomes a valid (empty) `FinalReport` carrying
+  the reason, so the UI never special-cases errors.
+
+### Gotchas
+- A stray CJK character ("近") slipped into a prompt string while typing; caught on
+  review. Worth a `git diff` read-through on hand-authored prose.
+- Offline-testing a multi-LLM pipeline needs care: the orchestrator's Sonnet loop
+  and the domain guardrail share one injected client, so the `FakeAnthropic`
+  response *sequence* must match call order (domain check first, then plan steps).
+  Specialist agents are injected as stubs so their own LLM calls don't consume that
+  sequence — keeping each test's fake responses readable.
+
+### Verification
+`ruff` clean · `mypy src/` clean (49 files) · **71/71 unit tests** (+6), all offline
+via `FakeAnthropic`. The full live run is `tests/integration/test_end_to_end.py`
+(gated by `NEOWATCH_RUN_INTEGRATION=1`; spends real tokens, hits NASA/arXiv).
+
+---
+
 ## 2026-06-24 — Phase 5 (Guardrails and safety) — COMPLETE
 
 **Files:** `src/neowatch/guardrails/{models,sanitise,domain,factcheck,token_budget}.py`;

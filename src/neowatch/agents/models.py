@@ -2,10 +2,13 @@
 
 Shared data structures that flow between agents and into the final report:
 ``NEOData`` (FetchAgent output), ``ImageAsset`` (ImageAgent output), and the
-report schema ``FinalReport`` with ``NEOEventReport`` and ``Citation``.
+report schema ``FinalReport`` with ``NEOEventReport``, ``RiskTableRow``, and
+``Citation``.
 
 Key concept: typed contracts between agents — never bare dicts — so bad data
-fails fast at the boundary instead of deep inside synthesis.
+fails fast at the boundary instead of deep inside synthesis. ``FinalReport`` is
+the single validated artifact the UI renders; if synthesis produces something
+off-shape, pydantic rejects it here rather than letting it reach the user.
 
 Implemented across Phase 4 (NEOData, ImageAsset) and Phase 6 (FinalReport).
 """
@@ -50,3 +53,66 @@ class ImageAsset(BaseModel):
     local_path: str | None = None
     width: int | None = None
     height: int | None = None
+
+
+class Citation(BaseModel):
+    """One source reference for the report's appendix.
+
+    Attributes:
+        source_type: Origin of the fact, e.g. ``"arxiv"``, ``"nasa_neows"``,
+            ``"apod"``.
+        title: Human-readable title.
+        identifier: A stable id (arXiv id, object id, date) when available.
+        url: Link to the source, when one exists.
+    """
+
+    source_type: str
+    title: str
+    identifier: str = ""
+    url: str | None = None
+
+
+class NEOEventReport(BaseModel):
+    """One close-approach event: deterministic figures plus a one-line summary.
+
+    Every numeric field is copied from CalcAgent's computed ``OrbitalAnalysis``;
+    only ``summary`` is LLM-written prose (and it is fact-checked).
+    """
+
+    object_id: str
+    name: str
+    close_approach_date: str = ""
+    miss_distance_ld: float
+    velocity_km_s: float
+    diameter_max_m: float
+    risk_band: str
+    summary: str = ""
+
+
+class RiskTableRow(BaseModel):
+    """A compact, tabular risk row (rendered as a dataframe in the UI)."""
+
+    name: str
+    miss_distance_ld: float
+    velocity_km_s: float
+    diameter_max_m: float
+    risk_band: str
+
+
+class FinalReport(BaseModel):
+    """The single validated artifact the pipeline returns and the UI renders.
+
+    Prose fields (``executive_summary``, ``literature_insights``, each event's
+    ``summary``) are LLM-written and fact-checked; tables, citations, and images
+    are assembled deterministically from agent outputs.
+    """
+
+    query: str
+    executive_summary: str = ""
+    neo_events: list[NEOEventReport] = Field(default_factory=list)
+    orbital_risk_table: list[RiskTableRow] = Field(default_factory=list)
+    literature_insights: str = ""
+    confidence_notes: list[str] = Field(default_factory=list)
+    data_sources: list[Citation] = Field(default_factory=list)
+    images: list[ImageAsset] = Field(default_factory=list)
+    prompt_version: str = ""
