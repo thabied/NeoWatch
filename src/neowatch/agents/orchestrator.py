@@ -95,7 +95,16 @@ class OrchestratorAgent(BaseAgent):
             "fetch_images": image_agent or ImageAgent(settings),
         }
         self.domain_guardrail = DomainGuardrail(settings, client=client)
-        self.budget = TokenBudgetGuardrail(settings, client=client, logger=self.logger)
+        # Watch the *whole-session* budget here, not the per-single-call cap: this
+        # guardrail tracks the orchestrator's cumulative context across every agent
+        # (fetch alone can spend several thousand tokens carrying NEO data), which
+        # is far larger than any one agent's per-call allowance.
+        self.budget = TokenBudgetGuardrail(
+            settings,
+            client=client,
+            logger=self.logger,
+            max_tokens=settings.token_budget_per_session,
+        )
 
     async def run(self, context: AgentContext) -> AgentResult:
         """Validate input, then plan-and-dispatch via a Sonnet tool-use loop.

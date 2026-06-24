@@ -103,3 +103,15 @@ async def test_invokes_only_needed_agents(monkeypatch: pytest.MonkeyPatch) -> No
     assert stubs["image"].calls == 0
     assert isinstance(context.session_cache["neo_data"], NEOData)  # parked for synthesis
     get_settings.cache_clear()
+
+
+def test_orchestrator_watches_session_budget_not_per_agent_cap(test_settings: Any) -> None:
+    """Regression: the loop budget must be the whole-session total, not 4096.
+
+    A live run showed FetchAgent alone spends ~4.8k tokens, which tripped the
+    per-agent cap (4096) and hard-stopped the orchestrator after one agent. The
+    guardrail must watch ``token_budget_per_session`` instead.
+    """
+    orch = OrchestratorAgent(test_settings)
+    assert orch.budget.max_tokens == test_settings.token_budget_per_session
+    assert test_settings.token_budget_per_session > test_settings.max_tokens_per_agent

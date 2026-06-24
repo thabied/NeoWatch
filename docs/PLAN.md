@@ -633,11 +633,12 @@ setup/run/deploy instructions, and a demo capture.
 - [x] `pytest tests/ -v` → all non-integration tests pass (**76**, incl. the offline
   `tests/integration/test_smoke.py`; live integration tests skip without keys).
 - [x] `mypy src/` (49 files) and `ruff check src/ tests/` → clean across the repo.
-- [~] `docker build -t neowatch .` — **Dockerfile written & reviewed; not yet built**
-  in this session (the local Docker daemon was not running). `python -m neowatch.main`
-  is verified to serve HTTP 200, and the image is standard `python:3.12-slim` +
-  `requirements.txt` + `pip install -e .`. Run `docker build -t neowatch .` once
-  Docker Desktop is up to tick this.
+- [x] `docker build -t neowatch .` succeeds and `docker run` launches the UI —
+  **built and verified**: container serves **HTTP 200** on `:7860` with a clean
+  (secret-free) startup log. Note: pass secrets by *mounting* `.env`
+  (`-v "$PWD/.env:/app/.env:ro"`), not `--env-file` — Docker's env-file parser
+  doesn't strip inline comments and mangles int settings; pydantic-settings' own
+  dotenv parser handles it.
 - [x] HF Spaces deploy: `app.py` + `requirements.txt` at root; secrets documented in
   the README ("Deploy to HuggingFace Spaces").
 - [x] README enables clone → running UI (setup, env vars, run, test, Docker, deploy).

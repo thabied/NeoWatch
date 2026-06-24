@@ -66,6 +66,23 @@ working UI — and gives the repo a front page that explains the engineering ide
 `ruff` clean · `mypy src/` clean (49 files) · **76/76** non-integration tests
 (unit + offline smoke). CI workflow runs the same three gates on every push.
 
+### Live-run findings (2026-06-24) — two bugs only a real run could surface
+- **Mis-scoped token budget (real bug, fixed).** The orchestrator wired its
+  `TokenBudgetGuardrail` to `max_tokens_per_agent` (4096), but it watches the
+  *cumulative* context across all agents. A live run showed FetchAgent alone spends
+  ~4.8k tokens carrying NEO data, so the loop hard-stopped after one agent and the
+  report came back empty. Fixed to use `token_budget_per_session` (200k); added a
+  regression test. The offline suite missed this because `FakeAnthropic` reports
+  only 15 tokens/call — a reminder that fakes hide magnitude bugs, and that a single
+  live run is worth a lot of green offline tests.
+- **Docker `--env-file` ≠ dotenv (deploy gotcha).** Docker's env-file parser keeps
+  inline `# comments` as part of the value, so int settings failed to parse and the
+  container crashed on boot. Fix: *mount* `.env` and let pydantic-settings parse it.
+- **What worked, live:** real NASA data → 10 asteroids with computed figures →
+  Sonnet narrative that the fact-check passed at "high" confidence; the orchestrator
+  correctly invoked only fetch+calc (not literature/images) for a risk query. The
+  deterministic-core/LLM-shell held up against real data.
+
 ### Project status: all 8 phases complete
 NeoWatch is functionally and structurally done end-to-end — guarded input →
 agentic orchestration → deterministic computation + RAG → grounded, fact-checked
