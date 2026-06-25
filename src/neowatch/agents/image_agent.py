@@ -40,7 +40,10 @@ class ImageAgent(BaseAgent):
         cache_dir: Path | None = None,
     ) -> None:
         super().__init__(settings, logger)
-        self.cache_dir = cache_dir or Path(".image_cache")
+        # Resolve to an absolute path so ``local_path`` is unambiguous: Gradio's
+        # gallery resolves served files against its allow-list, and a relative
+        # path would be checked against the server's cwd rather than ours.
+        self.cache_dir = (cache_dir or Path(settings.image_cache_dir)).resolve()
 
     async def run(self, context: AgentContext) -> AgentResult:
         """Fetch APOD images for the window, validate, resize, and attribute."""

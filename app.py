@@ -12,12 +12,19 @@ Required Space secrets: ``ANTHROPIC_API_KEY`` and ``NASA_API_KEY``.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from neowatch.config import get_settings
 from neowatch.logging_config import configure_logging
 from neowatch.ui.app import build_app
 
-configure_logging(get_settings().log_level)
+_settings = get_settings()
+configure_logging(_settings.log_level)
 demo = build_app()
 
+# Gradio 4+ only serves local files from its allow-list, so the resized APOD
+# images need their cache dir explicitly permitted or the gallery renders blank.
+_ALLOWED_PATHS = [str(Path(_settings.image_cache_dir).resolve())]
+
 if __name__ == "__main__":
-    demo.launch()
+    demo.launch(allowed_paths=_ALLOWED_PATHS)

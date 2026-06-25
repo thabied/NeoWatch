@@ -7,6 +7,8 @@ server.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import structlog
 
 from neowatch import __version__
@@ -31,7 +33,12 @@ def main() -> None:
         port=_SERVER_PORT,
     )
     app = build_app()
-    app.launch(server_port=_SERVER_PORT)
+    # Permit Gradio to serve the resized APOD images from the cache dir; without
+    # this, the gallery's <img> requests are blocked and the images stay blank.
+    app.launch(
+        server_port=_SERVER_PORT,
+        allowed_paths=[str(Path(settings.image_cache_dir).resolve())],
+    )
 
 
 if __name__ == "__main__":

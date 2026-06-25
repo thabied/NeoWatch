@@ -12,6 +12,45 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-25 — Gallery fix: Gradio won't serve un-allowed local files
+
+**Files:** `config.py`, `agents/image_agent.py`, `main.py`, `app.py`, `.gitignore`.
+
+### What
+The image gallery rendered **blank** in the browser even though the image agent
+had downloaded and resized the APOD file and set `local_path` correctly. Fix:
+make `local_path` absolute and pass `allowed_paths=[<image cache dir>]` to every
+`launch()` call. Added an `image_cache_dir` setting as the single source of truth
+and gitignored `.image_cache/` (it was missing from `.gitignore`, only in
+`.dockerignore`).
+
+### Why it happened
+Since Gradio 4 (we're on 6.19), the dev server **refuses to serve arbitrary local
+files** for security — the working directory is no longer auto-served. A component
+handed a filepath outside the allow-list produces an `<img>` whose request the
+server denies, so the picture is silently blank. The file existed, the path was
+valid, and the server still wouldn't hand it over. `allowed_paths` is the
+documented way to permit a directory; an absolute path avoids the server resolving
+the relative path against its own cwd.
+
+### The lesson (again)
+**Headless/programmatic runs hide rendering bugs.** Both earlier "successful" live
+runs produced a valid `ImageAsset` with a path — green all the way — but nothing
+ever asked a *browser* to fetch that path. Same shape as the token-budget bug:
+fakes and non-visual runs pass while the real UX is broken. A human looking at the
+actual page is still an irreplaceable test.
+
+### Subtlety worth remembering
+A separate red herring surfaced first: a plain risk query ("…how risky are
+they?") sometimes shows no image simply because the orchestrator **chose not to
+call** `fetch_images` (LLM planning variance at `temperature=0.2`). "No image" had
+two independent causes — one a real serving bug, one expected planner behaviour.
+Diagnosing meant separating them: the server-side file check (HTTP 200) proved
+serving worked, and the `orchestrator.done invoked=[…]` log proved the agent
+wasn't called. To reliably exercise imagery, the query must *ask* for it.
+
+---
+
 ## 2026-06-24 — Phase 8 (Production hardening) — COMPLETE
 
 **Files:** `Dockerfile`, `.dockerignore`, `app.py` (repo root, HF Spaces entry),

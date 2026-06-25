@@ -49,6 +49,10 @@ class Settings(BaseSettings):
 
     # --- Local paths / logging ---
     chroma_persist_dir: str = ".chroma"
+    # Where resized APOD images are written. The Gradio server must be told to
+    # serve from here (via ``allowed_paths``), since Gradio 4+ refuses to serve
+    # arbitrary local files for security — see ``main.py`` / root ``app.py``.
+    image_cache_dir: str = ".image_cache"
     log_level: str = "INFO"
 
 

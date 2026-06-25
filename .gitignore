@@ -26,6 +26,8 @@ htmlcov/
 # --- Project runtime data ---
 # local ChromaDB vector store (re-ingested on startup)
 .chroma/
+# resized APOD images, re-downloaded on demand
+.image_cache/
 *.log
 
 # --- OS / editor ---
