@@ -126,6 +126,6 @@ class DomainGuardrail:
             messages=[{"role": "user", "content": query}],
         )
         if context is not None and resp.usage is not None:
-            context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)
+            context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
         answer = "".join(block.text for block in resp.content if block.type == "text")
         return answer.strip().upper().startswith("YES")

@@ -91,7 +91,7 @@ async def test_fetch_agent_runs_tool_loop(monkeypatch: pytest.MonkeyPatch) -> No
     assert len(neo.feed_items) == 1
     assert neo.feed_items[0].name == "465633 (2009 JR5)"
     # Two model calls (tool_use, then end_turn) were token-counted.
-    assert context.tokens_used == 30
+    assert context.cost_tokens == 30
     get_settings.cache_clear()
 
 

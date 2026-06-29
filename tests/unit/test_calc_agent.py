@@ -57,7 +57,7 @@ async def test_calc_agent_numbers_match_pure_calc(monkeypatch: pytest.MonkeyPatc
     assert report.analyses[0] == expected  # exact, field-for-field
     assert report.narrative == "A short, grounded summary."
     assert report.risks[0].risk_band == "low"  # 117 LD, 478 m, PHA -> score 3
-    assert context.tokens_used == 15  # one narration call (10 + 5)
+    assert context.cost_tokens == 15  # one narration call (10 + 5)
     get_settings.cache_clear()
 
 

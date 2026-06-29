@@ -86,7 +86,7 @@ class FetchAgent(BaseAgent):
                         cache_control={"type": "ephemeral"},
                     )
                     if resp.usage is not None:
-                        context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)
+                        context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
                     if resp.stop_reason != "tool_use":
                         break
 

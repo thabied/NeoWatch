@@ -65,3 +65,9 @@ class FakeAnthropic:
 
     def __init__(self, responses: list[FakeResponse]) -> None:
         self.messages = _FakeMessages(responses)
+        self.closed = False
+
+    async def close(self) -> None:
+        # Mirrors AsyncAnthropic.close(); lets tests assert the pipeline closes a
+        # client it owns.
+        self.closed = True

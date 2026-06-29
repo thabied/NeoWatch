@@ -99,7 +99,7 @@ class CalcAgent(BaseAgent):
             messages=[{"role": "user", "content": figures}],
         )
         if resp.usage is not None:
-            context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)
+            context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
         return "".join(block.text for block in resp.content if block.type == "text")
 
 

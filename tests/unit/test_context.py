@@ -10,17 +10,20 @@ def test_context_defaults() -> None:
     ctx = AgentContext(query="any NEOs this week?")
     assert ctx.query == "any NEOs this week?"
     assert ctx.history == []
-    assert ctx.tokens_used == 0
+    assert ctx.cost_tokens == 0
+    assert ctx.context_tokens == 0
     assert ctx.nasa_call_count == 0
     assert ctx.session_cache == {}
 
 
-def test_add_tokens_accumulates() -> None:
-    """add_tokens increments the running total."""
+def test_add_tokens_splits_cost_and_footprint() -> None:
+    """cost_tokens accumulates input+output (monotonic); context_tokens is the
+    last call's input only (the live footprint)."""
     ctx = AgentContext(query="x")
-    ctx.add_tokens(100)
-    ctx.add_tokens(50)
-    assert ctx.tokens_used == 150
+    ctx.add_tokens(100, 20)
+    ctx.add_tokens(50, 10)
+    assert ctx.cost_tokens == 180  # (100+20) + (50+10) — keeps growing
+    assert ctx.context_tokens == 50  # just the most recent input, not a sum
 
 
 def test_compress_history_collapses_old_turns() -> None:

@@ -127,7 +127,7 @@ class SynthesisAgent(BaseAgent):
             output_format=ProseModel,
         )
         if resp.usage is not None:
-            context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)
+            context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
         # parsed_output is None only if the model refused or was cut off
         # (max_tokens) before producing a complete object — degrade to empty
         # prose so the deterministic tables/citations still build.

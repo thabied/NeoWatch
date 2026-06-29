@@ -1,8 +1,10 @@
 """Unit tests for the token-budget guardrail (offline).
 
 The Haiku summary call is served by ``FakeAnthropic``, so compression runs with
-no paid call. We assert each threshold maps to the right action and that
-compression genuinely shrinks the running token count.
+no paid call. We assert each threshold maps to the right action, that the right
+counter drives each decision (cost for warn/stop, footprint for compress), and —
+the regression that motivated the two-counter split — that compression lowers the
+context footprint **without rolling back the cumulative bill**.
 """
 
 from __future__ import annotations
@@ -29,55 +31,76 @@ def _fake_summary() -> FakeAnthropic:
     return FakeAnthropic([FakeResponse([block], "end_turn")])
 
 
-def _context_with_history(turns: int, tokens_used: int) -> AgentContext:
+def _context(turns: int, cost_tokens: int, context_tokens: int) -> AgentContext:
     history = [
         {"role": "user", "content": f"turn number {i} about asteroids"} for i in range(turns)
     ]
-    return AgentContext(query="q", history=history, tokens_used=tokens_used)
+    return AgentContext(
+        query="q", history=history, cost_tokens=cost_tokens, context_tokens=context_tokens
+    )
 
 
 async def test_below_warn_is_ok(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Under 70% of budget, no action is taken."""
+    """Under 70% of cost and 85% of footprint, no action is taken."""
     settings = _settings(monkeypatch)
     guard = TokenBudgetGuardrail(settings, client=_fake_summary(), max_tokens=100)
-    context = _context_with_history(turns=8, tokens_used=50)  # 50%
+    context = _context(turns=8, cost_tokens=50, context_tokens=50)  # 50% / 50%
     assert await guard.enforce(context) == "ok"
     get_settings.cache_clear()
 
 
 async def test_warn_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Between 70% and 85%, warn but leave history intact."""
+    """Between 70% and 95% of cost (footprint still low), warn but leave history intact."""
     settings = _settings(monkeypatch)
     guard = TokenBudgetGuardrail(settings, client=_fake_summary(), max_tokens=100)
-    context = _context_with_history(turns=8, tokens_used=75)  # 75%
+    context = _context(turns=8, cost_tokens=75, context_tokens=50)  # cost 75%, footprint 50%
     assert await guard.enforce(context) == "warn"
     assert len(context.history) == 8  # untouched
     get_settings.cache_clear()
 
 
-async def test_compress_threshold_reduces_tokens(monkeypatch: pytest.MonkeyPatch) -> None:
-    """At/above 85%, history is summarised and the token count drops."""
+async def test_compress_is_driven_by_footprint_not_cost(monkeypatch: pytest.MonkeyPatch) -> None:
+    """At/above 85% of the *footprint*, history is summarised — even when cost is low."""
     settings = _settings(monkeypatch)
     guard = TokenBudgetGuardrail(settings, client=_fake_summary(), max_tokens=100)
-    context = _context_with_history(turns=8, tokens_used=90)  # 90%
+    context = _context(turns=8, cost_tokens=50, context_tokens=90)  # cost 50%, footprint 90%
 
-    before = context.tokens_used
     action = await guard.enforce(context)
 
     assert action == "compressed"
-    assert context.tokens_used < before  # the whole point
     assert len(context.history) == 4  # 1 summary + last 3
     assert context.history[0]["role"] == "system"
     assert "Summary of 5 earlier turns" in context.history[0]["content"]
     get_settings.cache_clear()
 
 
+async def test_compression_lowers_footprint_not_the_bill(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The regression behind the two-counter split.
+
+    Compression must shrink ``context_tokens`` (the live footprint) while
+    ``cost_tokens`` (the cumulative bill) only ever grows — here by the summary
+    call's own usage. The old single counter was re-baselined to the footprint
+    estimate on compress, silently un-billing real spend.
+    """
+    settings = _settings(monkeypatch)
+    guard = TokenBudgetGuardrail(settings, client=_fake_summary(), max_tokens=100)
+    context = _context(turns=8, cost_tokens=50, context_tokens=90)
+
+    assert await guard.enforce(context) == "compressed"
+
+    # Footprint dropped (history was summarised); bill grew by the summary call
+    # (FakeUsage = 10 in + 5 out) and was NOT rolled back to the estimate.
+    assert context.context_tokens < 90
+    assert context.cost_tokens == 65  # 50 + 15, never reset downward
+    get_settings.cache_clear()
+
+
 async def test_hard_stop_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
-    """At/above 95%, signal a hard stop without compressing."""
+    """At/above 95% of cost, signal a hard stop without compressing."""
     settings = _settings(monkeypatch)
     fake = _fake_summary()
     guard = TokenBudgetGuardrail(settings, client=fake, max_tokens=100)
-    context = _context_with_history(turns=8, tokens_used=96)  # 96%
+    context = _context(turns=8, cost_tokens=96, context_tokens=90)  # cost 96%
     assert await guard.enforce(context) == "stop"
     assert fake.messages.calls == 0  # no summary call on a hard stop
     assert len(context.history) == 8  # untouched
@@ -86,12 +109,12 @@ async def test_hard_stop_threshold(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_compress_history_is_pure() -> None:
     """compress_history collapses old turns and keeps the latest, no LLM involved."""
-    context = _context_with_history(turns=6, tokens_used=0)
+    context = _context(turns=6, cost_tokens=0, context_tokens=0)
     collapsed = context.compress_history("a summary", keep_last=3)
     assert collapsed == 3
     assert len(context.history) == 4
     assert context.history[0]["content"] == "[Summary of 3 earlier turns] a summary"
     # Short history is left untouched.
-    short = _context_with_history(turns=2, tokens_used=0)
+    short = _context(turns=2, cost_tokens=0, context_tokens=0)
     assert short.compress_history("x", keep_last=3) == 0
     assert len(short.history) == 2

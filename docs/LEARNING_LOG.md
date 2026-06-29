@@ -12,6 +12,90 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-29 — Tier 2 implemented: split token counters + one shared client
+
+**Files:** `context.py`, `guardrails/token_budget.py`, `pipeline.py`, plus the five
+`add_tokens` call sites (`orchestrator.py`, `fetch_agent.py`, `synthesis_agent.py`,
+`calc_agent.py`, `guardrails/domain.py`) and tests. Backlog items #3 and #4 from
+[`IMPROVEMENTS.md`](IMPROVEMENTS.md).
+
+### #3 — One counter was measuring two different things
+
+**The bug.** `AgentContext.tokens_used` accumulated *cumulative billed cost*
+(input + output, every call). But `TokenBudgetGuardrail._compress` re-baselined it
+to `_estimate_tokens(history)` — a char-estimate of the *current* history size.
+After the first compression the same number silently changed meaning: the 95% hard
+stop was now comparing a footprint estimate against a cost budget. A counter that
+means two things means nothing.
+
+**The fix — two counters, each watched by the decision that owns it.**
+- `cost_tokens`: **monotonic** cumulative bill (input + output). You can't un-spend
+  money, so it only grows. The **hard stop** (95%) and **warn** (70%) watch this.
+- `context_tokens`: the live context-window footprint — set to the *last call's
+  input tokens* (literally the size of the conversation we just sent). **Compression**
+  (85%) watches this.
+
+**Why each decision uses the counter it does** (the real insight):
+- Compress keys off `context_tokens` because compression is the *only* lever that
+  moves it. If compress were keyed off cost (which compression can't lower), it would
+  re-fire on every check forever — which is exactly why the old code re-baselined the
+  counter, papering over the design flaw with a meaning-switch.
+- Stop keys off `cost_tokens` because the bill is the thing you genuinely cannot walk
+  back, so that's what a hard halt must protect.
+
+**`add_tokens` now takes `(input_tokens, output_tokens)`** instead of a pre-summed
+count: `cost_tokens += input + output`, `context_tokens = input`. Using the real
+`input_tokens` as the footprint (the doc's "summed `resp.usage`" suggestion) is more
+accurate than the char-estimate and makes `context_tokens` meaningful in the live
+orchestrator/fetch loops — whose growing message history shows up as rising input
+tokens. (`_estimate_tokens` survives for exactly one spot: setting `context_tokens`
+right after a local compress, before the next real call gives us an exact count.)
+
+**Scope note I had to resist.** `context.history` is only ever populated by tests —
+production agents drive local `messages` lists — so the compression machinery is
+*dormant* in production today. Wiring history through is a separate change; #3 is
+purely about the counter semantics, so I left that alone.
+
+**Regression test:** `test_compression_lowers_footprint_not_the_bill` asserts that
+after a compress, `context_tokens` drops but `cost_tokens` grew by the summary call's
+own usage and was never reset — the exact behaviour the old single counter got wrong.
+
+### #4 — One Anthropic client per run, closed at the end
+
+**The leak.** Each agent did `self.client or get_anthropic_client(self.settings)`, so
+in production (no injected client) every agent and guardrail built its *own*
+`AsyncAnthropic` — each with its own HTTP connection pool — and **none were closed**.
+That's a pool leak per agent per request.
+
+**The fix.** `run_query` now builds **one** client and threads it through both stages
+(they already pass it down to every sub-agent and guardrail). The lifecycle rule is
+ownership-based:
+```python
+owns_client = client is None
+client = client or get_anthropic_client(settings)
+try:
+    ...  # orchestrator + synthesis, both with client=client
+finally:
+    if owns_client:
+        await client.close()
+```
+We close only a client we created. A caller-injected client (a test's
+`FakeAnthropic`, or a future long-lived shared client) is the caller's to manage —
+closing it from here would be a surprise.
+
+**Two SDK details worth recording:**
+- The async client's method is `await client.close()`, **not** `aclose()` (I checked
+  `hasattr` before writing rather than guessing — `AsyncAnthropic` has `close`, no
+  `aclose`). It also supports `async with`, but the explicit try/finally reads clearer
+  with the create-or-inject branch.
+- Tests verify both arms: `FakeAnthropic` grew a `close()` that flips a `closed` flag;
+  one test patches `get_anthropic_client` so the owned-client path runs offline and
+  asserts `closed is True`, another injects a client and asserts `closed is False`.
+
+**Verification:** `ruff` clean, `mypy src/` clean (49 files), **81 tests pass**.
+
+---
+
 ## 2026-06-29 — Tier 1 implemented: structured outputs + prompt caching
 
 **Files:** `agents/synthesis_agent.py`, `agents/fetch_agent.py`,

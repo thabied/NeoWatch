@@ -73,31 +73,40 @@ class TokenBudgetGuardrail:
         self.logger = logger
         self.max_tokens = max_tokens or settings.max_tokens_per_agent
 
-    def ratio(self, context: AgentContext) -> float:
-        """Return tokens used as a fraction of the budget."""
-        return context.tokens_used / self.max_tokens
+    def cost_ratio(self, context: AgentContext) -> float:
+        """Cumulative billed cost as a fraction of the budget (monotonic)."""
+        return context.cost_tokens / self.max_tokens
+
+    def context_ratio(self, context: AgentContext) -> float:
+        """Current context footprint as a fraction of the budget."""
+        return context.context_tokens / self.max_tokens
 
     async def enforce(self, context: AgentContext) -> BudgetAction:
         """Check the budget and take the action for the current threshold.
 
-        Args:
-            context: The run context whose ``tokens_used`` is being watched.
+        Each decision watches the *right* counter:
+
+        * **stop** keys off ``cost_tokens`` — the bill can't be walked back, so
+          once cumulative spend hits 95% we must halt.
+        * **compress** keys off ``context_tokens`` — compression only helps the
+          live footprint, so triggering it off cost (which compression can't
+          lower) would re-fire forever. Driving it off the footprint means the
+          trigger actually clears once we shrink the history.
+        * **warn** keys off ``cost_tokens`` (approaching the bill ceiling).
 
         Returns:
-            ``"stop"`` at/above 95% (caller should halt with partial results),
-            ``"compressed"`` at/above 85% (history was summarised),
-            ``"warn"`` at/above 70%, otherwise ``"ok"``.
+            ``"stop"`` at/above 95% of cost, ``"compressed"`` at/above 85% of the
+            context footprint, ``"warn"`` at/above 70% of cost, otherwise ``"ok"``.
         """
-        ratio = self.ratio(context)
-        if ratio >= _STOP_AT:
-            self._log("token_budget.hard_stop", context, ratio)
+        if self.cost_ratio(context) >= _STOP_AT:
+            self._log("token_budget.hard_stop", context, self.cost_ratio(context))
             return "stop"
-        if ratio >= _COMPRESS_AT:
+        if self.context_ratio(context) >= _COMPRESS_AT:
             await self._compress(context)
-            self._log("token_budget.compressed", context, self.ratio(context))
+            self._log("token_budget.compressed", context, self.context_ratio(context))
             return "compressed"
-        if ratio >= _WARN_AT:
-            self._log("token_budget.warn", context, ratio)
+        if self.cost_ratio(context) >= _WARN_AT:
+            self._log("token_budget.warn", context, self.cost_ratio(context))
             return "warn"
         return "ok"
 
@@ -119,19 +128,25 @@ class TokenBudgetGuardrail:
             messages=[{"role": "user", "content": transcript}],
         )
         if resp.usage is not None:
-            context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)
+            # The summary call is itself billed — it grows cost_tokens like any
+            # other call. (This is real money spent; it is never rolled back.)
+            context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
         summary = "".join(block.text for block in resp.content if block.type == "text")
 
         context.compress_history(summary, keep_last=keep_last)
-        # Re-baseline the running counter to the compressed footprint: the next
-        # model call will carry this smaller history, so this is what now "costs".
-        context.tokens_used = _estimate_tokens(context.history)
+        # The footprint just shrank. Re-estimate context_tokens from the compressed
+        # history so the compress trigger clears; the next real call will replace
+        # this estimate with an exact input-token count. cost_tokens is untouched —
+        # that is the bug this split fixes: compression lowers the footprint, not
+        # the bill.
+        context.context_tokens = _estimate_tokens(context.history)
 
     def _log(self, event: str, context: AgentContext, ratio: float) -> None:
         if self.logger is not None:
             self.logger.info(
                 event,
-                tokens_used=context.tokens_used,
+                cost_tokens=context.cost_tokens,
+                context_tokens=context.context_tokens,
                 budget=self.max_tokens,
                 ratio=round(ratio, 3),
             )

@@ -21,6 +21,7 @@ from .agents.orchestrator import OrchestratorAgent
 from .agents.synthesis_agent import SynthesisAgent
 from .config import Settings, get_settings
 from .context import AgentContext, ProgressCallback
+from .llm import get_anthropic_client
 
 
 async def run_query(
@@ -48,16 +49,30 @@ async def run_query(
     settings = settings or get_settings()
     context = AgentContext(query=query)
 
-    orchestrator = OrchestratorAgent(settings, logger=logger, client=client, progress=progress)
-    plan = await orchestrator.run(context)
-    if not plan.success:
-        return _rejection_report(query, plan.error or "Query was rejected.")
+    # Build ONE client for the whole run and thread it through both stages, which
+    # in turn pass it to every sub-agent and guardrail. Previously each agent built
+    # its own AsyncAnthropic via get_anthropic_client and none were closed, leaking
+    # an HTTP connection pool per agent per request. We only own (and therefore
+    # close) a client we created — when the caller injects one (e.g. a test's
+    # FakeAnthropic), its lifecycle is theirs.
+    owns_client = client is None
+    client = client or get_anthropic_client(settings)
+    try:
+        orchestrator = OrchestratorAgent(
+            settings, logger=logger, client=client, progress=progress
+        )
+        plan = await orchestrator.run(context)
+        if not plan.success:
+            return _rejection_report(query, plan.error or "Query was rejected.")
 
-    synthesis = SynthesisAgent(settings, logger=logger, client=client, progress=progress)
-    result = await synthesis.run(context)
-    report = result.data
-    assert isinstance(report, FinalReport)  # SynthesisAgent always returns one
-    return report
+        synthesis = SynthesisAgent(settings, logger=logger, client=client, progress=progress)
+        result = await synthesis.run(context)
+        report = result.data
+        assert isinstance(report, FinalReport)  # SynthesisAgent always returns one
+        return report
+    finally:
+        if owns_client:
+            await client.close()
 
 
 def _rejection_report(query: str, reason: str) -> FinalReport:

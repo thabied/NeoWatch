@@ -39,3 +39,30 @@ async def test_run_query_rejection_returns_final_report(monkeypatch: pytest.Monk
     assert report.neo_events == []
     assert report.orbital_risk_table == []
     get_settings.cache_clear()
+
+
+async def test_run_query_closes_a_client_it_creates(monkeypatch: pytest.MonkeyPatch) -> None:
+    """When no client is injected, run_query builds one and closes it (no leak)."""
+    settings = _settings(monkeypatch)
+    fake = FakeAnthropic([FakeResponse([FakeTextBlock("NO")], "end_turn")])
+    # Force the pipeline's internally-built client to be our fake, so the run
+    # stays offline and we can observe close().
+    monkeypatch.setattr("neowatch.pipeline.get_anthropic_client", lambda _settings: fake)
+
+    await run_query("How do I bake sourdough bread?", settings=settings)  # no client=
+
+    assert fake.closed is True  # the client it owns was closed
+    get_settings.cache_clear()
+
+
+async def test_run_query_does_not_close_an_injected_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An injected client is the caller's to manage — run_query must not close it."""
+    settings = _settings(monkeypatch)
+    fake = FakeAnthropic([FakeResponse([FakeTextBlock("NO")], "end_turn")])
+
+    await run_query("How do I bake sourdough bread?", settings=settings, client=fake)
+
+    assert fake.closed is False  # caller owns the lifecycle
+    get_settings.cache_clear()

@@ -98,7 +98,7 @@ async def test_domain_check_records_tokens(monkeypatch: pytest.MonkeyPatch) -> N
     guard = DomainGuardrail(settings, client=_yes())
     context = AgentContext(query="asteroid close approach this week?")
     await guard.validate(context.query, context)
-    assert context.tokens_used == 15  # FakeUsage: 10 in + 5 out
+    assert context.cost_tokens == 15  # FakeUsage: 10 in + 5 out
     get_settings.cache_clear()
 
 
