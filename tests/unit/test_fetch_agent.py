@@ -13,6 +13,7 @@ from typing import Any
 
 import httpx
 import pytest
+import structlog
 
 from neowatch.agents.fetch_agent import FetchAgent, _assemble
 from neowatch.config import get_settings
@@ -117,4 +118,26 @@ async def test_fetch_agent_reports_tool_error(monkeypatch: pytest.MonkeyPatch) -
     # The run completes (the error was handled), with no usable feed data.
     assert result.success is True
     assert result.data.feed_items == []
+    get_settings.cache_clear()
+
+
+async def test_fetch_agent_logs_early_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A max_tokens cut-off mid-gather is logged, not swallowed (Tier 3 #5)."""
+    settings = _settings(monkeypatch)
+    monkeypatch.setattr(
+        "neowatch.agents.fetch_agent.get_async_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(404))),
+    )
+    # Haiku stops at its 1024-token cap before requesting any tool.
+    fake = FakeAnthropic([FakeResponse([], "max_tokens")])
+
+    agent = FetchAgent(settings, client=fake)  # type: ignore[arg-type]
+    with structlog.testing.capture_logs() as logs:
+        result = await agent.run(AgentContext(query="x"))
+
+    assert result.success is True  # still assembles (empty) data, no crash
+    assert any(
+        e["event"] == "fetch_agent.early_stop" and e.get("stop_reason") == "max_tokens"
+        for e in logs
+    )
     get_settings.cache_clear()

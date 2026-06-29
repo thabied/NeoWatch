@@ -12,6 +12,72 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-29 — Tier 3 implemented: early-stop logs, topic imagery, parse guard
+
+**Files:** `agents/fetch_agent.py`, `agents/orchestrator.py`, `agents/synthesis_agent.py`,
+`agents/image_agent.py`, `data/images.py` (new), `data/models.py`, plus tests. Backlog
+items #5, #6, #7 from [`IMPROVEMENTS.md`](IMPROVEMENTS.md).
+
+### #5 — Don't swallow non-`tool_use` stop reasons
+
+Both tool-use loops did `if resp.stop_reason != "tool_use": break`. `end_turn` is the
+normal exit, but `max_tokens` (Haiku's 1024 cap; Sonnet's 2048) and `refusal` mean the
+model was cut off or declined *mid-plan* — and we'd then assemble a report from partial
+data with no trace of why. Added a `self.logger.warning(...early_stop, stop_reason=...)`
+on exactly those two reasons before the break, in both loops.
+
+**Lesson — a silent `break` hides a whole failure class.** The fix is one line, but the
+value is observability: a truncated fetch or a refused plan now leaves a log line
+instead of a mysteriously thin report. Tested with `structlog.testing.capture_logs()`,
+which captures structured events regardless of which bound logger emitted them — so the
+assertion is on the event name + `stop_reason` field, not on formatted text.
+
+### #6 — Topic-relevant imagery (search-first, APOD fallback)
+
+**The problem.** `ImageAgent` only fetched APOD *by date range*, so "an image of
+Apophis" returned whatever the Astronomy Picture of the Day was that window — never a
+subject match. **The fix** adds a new `data/images.py` client over NASA's Image & Video
+Library (`images-api.nasa.gov` — a *keyless* host, separate from the rate-limited
+`api.nasa.gov`), and reshapes `ImageAgent.run` into **search-first with APOD fallback**:
+1. Reduce the query to its topic by stripping imagery filler words
+   (`show / me / an / image / of …`). If nothing survives, there's no topic → skip search.
+2. Search the Image Library on those terms; prepare any hits.
+3. If the search yields nothing usable (no topic, or zero results), fall back to the
+   always-available APOD-by-date path.
+
+**Lessons:**
+- **Degrade to the always-available source, not to nothing.** The teaching shape is the
+  fallback: prefer the topical source, but never return an empty gallery when a generic
+  one exists. The two sources feed one shared download→validate→resize→`ImageAsset` core,
+  so only the *fetch* differs.
+- **Parse heterogeneous search results defensively.** The library response is deeply
+  nested (`collection.items[].data[0]` for metadata, `.links[0].href` for the preview)
+  and rows vary — videos, items missing a preview link. `parse_image_search` *skips*
+  anything unusable rather than raising, so one odd result can't sink the batch.
+- **A keyword strip is a deliberately dumb heuristic.** No LLM call to extract the topic
+  (this agent is LLM-free by design) — a stopword filter is good enough and explainable,
+  and the empty-result fallback covers the cases where it's too aggressive.
+- **The existing tests kept passing for free:** their queries ("show me images",
+  "images") are pure filler, so they reduce to an empty topic and take the APOD path
+  exactly as before. Search only fires when a real subject is present.
+
+### #7 — Synthesis parse-failure guard
+
+Tier 1 already handled `parsed_output is None` (refusal/truncation). The remaining gap:
+if `messages.parse` itself *raises* (SDK validation, transport), it propagated out of
+`SynthesisAgent.run` — and since synthesis is the **last** stage, that breaks the
+pipeline's "always return a `FinalReport`" contract. Wrapped the call so any exception
+logs `synthesis.parse_failed` and degrades to empty prose; the computed tables/citations
+still build. `FakeResponse` gained a `raises` field so a test can simulate the throw.
+
+**Lesson — the contract holds only if the last stage can't throw.** Every earlier agent
+already "returns failure as data"; synthesis now matches, so no single call can turn a
+valid run into an unhandled exception at the UI.
+
+**Verification:** `ruff` clean, `mypy src/` clean (50 files), **89 tests pass**.
+
+---
+
 ## 2026-06-29 — Tier 2 implemented: split token counters + one shared client
 
 **Files:** `context.py`, `guardrails/token_budget.py`, `pipeline.py`, plus the five

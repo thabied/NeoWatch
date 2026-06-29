@@ -96,3 +96,83 @@ async def test_image_agent_drops_unreachable(
     assert result.success is True
     assert result.data == []
     get_settings.cache_clear()
+
+
+def _search_item(preview: str) -> dict[str, Any]:
+    return {
+        "data": [
+            {
+                "nasa_id": "PIA12345",
+                "title": "Asteroid Apophis",
+                "date_created": "2021-03-05T00:00:00Z",
+                "description": "An artist's concept of Apophis.",
+                "media_type": "image",
+                "center": "JPL",
+                "photographer": "NASA/JPL-Caltech",
+            }
+        ],
+        "links": [{"href": preview, "rel": "preview", "render": "image"}],
+    }
+
+
+def _patch_search_client(
+    monkeypatch: pytest.MonkeyPatch, items: list[dict[str, Any]], image_status: int = 200
+) -> None:
+    """Mock both NASA hosts: the image-search API and the image/APOD byte sources."""
+    img = _image_bytes()
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.host == "images-api.nasa.gov":
+            return httpx.Response(200, json={"collection": {"items": items}})
+        if "/planetary/apod" in request.url.path:
+            return httpx.Response(200, json=_apod_list())
+        if image_status == 200:
+            return httpx.Response(200, content=img, headers={"content-type": "image/jpeg"})
+        return httpx.Response(image_status)
+
+    monkeypatch.setattr(
+        "neowatch.agents.image_agent.get_async_client",
+        lambda: httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    )
+
+
+async def test_topic_query_uses_image_search(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A query with a real subject searches the Image Library, not APOD (Tier 3 #6)."""
+    settings = _settings(monkeypatch)
+    preview = "https://images-assets.nasa.gov/image/PIA12345/PIA12345~thumb.jpg"
+    _patch_search_client(monkeypatch, [_search_item(preview)])
+
+    agent = ImageAgent(settings, cache_dir=tmp_path)
+    result = await agent.run(AgentContext(query="show me an image of Apophis"))
+
+    assert result.success is True
+    assets = result.data
+    assert len(assets) == 1
+    assert assets[0].title == "Asteroid Apophis"  # from the search, not APOD
+    assert assets[0].date == "2021-03-05"  # ISO datetime trimmed to the date
+    assert "NASA/JPL-Caltech" in assets[0].credit
+    assert assets[0].width == 800  # resized like any other image
+    get_settings.cache_clear()
+
+
+async def test_search_miss_falls_back_to_apod(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """When the topic search finds nothing, the agent falls back to APOD (Tier 3 #6)."""
+    settings = _settings(monkeypatch)
+    _patch_search_client(monkeypatch, items=[])  # empty search result
+
+    agent = ImageAgent(settings, cache_dir=tmp_path)
+    context = AgentContext(
+        query="show me an image of Apophis",  # has a topic, so search is attempted
+        session_cache={"image_date_range": ("2024-01-01", "2024-01-03")},
+    )
+    result = await agent.run(context)
+
+    assert result.success is True
+    assets = result.data
+    assert len(assets) == 1
+    assert assets[0].title == "A Sample Astronomy Picture"  # the APOD fallback
+    get_settings.cache_clear()

@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
+import structlog
 
 from neowatch.agents.base import BaseAgent
 from neowatch.agents.models import NEOData
@@ -102,6 +103,37 @@ async def test_invokes_only_needed_agents(monkeypatch: pytest.MonkeyPatch) -> No
     assert stubs["rag"].calls == 0
     assert stubs["image"].calls == 0
     assert isinstance(context.session_cache["neo_data"], NEOData)  # parked for synthesis
+    get_settings.cache_clear()
+
+
+async def test_orchestrator_logs_early_stop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A planner cut off by max_tokens is logged, not swallowed (Tier 3 #5)."""
+    settings = _settings(monkeypatch)
+    fake = FakeAnthropic(
+        [
+            FakeResponse([FakeTextBlock("YES")], "end_turn"),  # domain check passes
+            FakeResponse([FakeTextBlock("partial plan")], "max_tokens"),  # planner cut off
+        ]
+    )
+    stubs = _stubs(settings)
+    orch = OrchestratorAgent(
+        settings,
+        client=fake,
+        fetch_agent=stubs["fetch"],
+        calc_agent=stubs["calc"],
+        rag_agent=stubs["rag"],
+        image_agent=stubs["image"],
+    )
+
+    with structlog.testing.capture_logs() as logs:
+        result = await orch.run(AgentContext(query="Which asteroids approach Earth this week?"))
+
+    assert result.success is True
+    assert all(stub.calls == 0 for stub in stubs.values())  # cut off before dispatching
+    assert any(
+        e["event"] == "orchestrator.early_stop" and e.get("stop_reason") == "max_tokens"
+        for e in logs
+    )
     get_settings.cache_clear()
 
 

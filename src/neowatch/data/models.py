@@ -122,6 +122,25 @@ class APODImage(_ApiModel):
     service_version: str | None = None
 
 
+class NASAImage(_ApiModel):
+    """One result from the NASA Image & Video Library search API.
+
+    Unlike APOD (keyed by date), this comes from a topic search. The search
+    response is deeply nested (``collection.items[].data[0]`` for metadata,
+    ``.links[0].href`` for the preview URL); the client flattens it onto this
+    model rather than relying on field aliases.
+    """
+
+    nasa_id: str
+    title: str
+    date_created: str
+    media_type: str
+    preview_url: HttpUrl
+    description: str = ""
+    center: str | None = None
+    photographer: str | None = None
+
+
 # --- JPL Small Body Database (SBDB) ------------------------------------------
 
 

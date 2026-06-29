@@ -42,6 +42,9 @@ class FakeResponse:
     # schema-validated model instance the real SDK exposes on ``parsed_output``.
     # ``None`` mimics a refusal/truncation where the API returns no parsed object.
     parsed_output: Any = None
+    # When set, create()/parse() raise this instead of returning — to simulate an
+    # SDK/validation/transport error mid-call.
+    raises: Exception | None = None
 
 
 class _FakeMessages:
@@ -52,6 +55,8 @@ class _FakeMessages:
     async def create(self, **_: Any) -> FakeResponse:
         resp = self._responses[min(self.calls, len(self._responses) - 1)]
         self.calls += 1
+        if resp.raises is not None:
+            raise resp.raises
         return resp
 
     async def parse(self, **_: Any) -> FakeResponse:

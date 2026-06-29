@@ -135,6 +135,30 @@ async def test_missing_parsed_output_does_not_crash(monkeypatch: pytest.MonkeyPa
     get_settings.cache_clear()
 
 
+async def test_parse_exception_degrades_to_deterministic_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If messages.parse raises, synthesis must still return a FinalReport.
+
+    Synthesis is the last pipeline stage, so a raised SDK/validation/transport
+    error here would break the "always return a FinalReport" contract. The agent
+    swallows it and degrades to empty prose; the computed tables still build.
+    """
+    settings = _settings(monkeypatch)
+    context = _context(monkeypatch, "n/a")
+    fake = FakeAnthropic([FakeResponse([], "end_turn", raises=RuntimeError("schema boom"))])
+    agent = SynthesisAgent(settings, client=fake)
+
+    result = await agent.run(context)
+    report = result.data
+
+    assert isinstance(report, FinalReport)
+    assert result.success is True  # degraded, not failed
+    assert report.executive_summary == ""  # no prose
+    assert len(report.orbital_risk_table) == 1  # deterministic parts still built
+    get_settings.cache_clear()
+
+
 async def test_brace_laden_prose_yields_populated_report(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

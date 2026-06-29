@@ -88,6 +88,13 @@ class FetchAgent(BaseAgent):
                     if resp.usage is not None:
                         context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
                     if resp.stop_reason != "tool_use":
+                        # end_turn is the normal exit. max_tokens (Haiku's 1024 cap)
+                        # or refusal mean we stopped mid-gather and may assemble from
+                        # partial data — log it instead of failing quietly.
+                        if resp.stop_reason in ("max_tokens", "refusal"):
+                            self.logger.warning(
+                                "fetch_agent.early_stop", stop_reason=resp.stop_reason
+                            )
                         break
 
                     messages.append({"role": "assistant", "content": resp.content})

@@ -118,22 +118,29 @@ class SynthesisAgent(BaseAgent):
         """
         grounding = _grounding_text(context.query, orbital, papers)
         client = self.client or get_anthropic_client(self.settings)
-        resp = await client.messages.parse(
-            model=self.settings.sonnet_model,
-            max_tokens=4096,
-            temperature=0.4,  # a little warmth for readable prose, still grounded
-            system=SYNTHESIS_V2,
-            messages=[{"role": "user", "content": grounding}],
-            output_format=ProseModel,
-        )
+        empty = ProseModel(executive_summary="", literature_insights="", event_summaries=[])
+        try:
+            resp = await client.messages.parse(
+                model=self.settings.sonnet_model,
+                max_tokens=4096,
+                temperature=0.4,  # a little warmth for readable prose, still grounded
+                system=SYNTHESIS_V2,
+                messages=[{"role": "user", "content": grounding}],
+                output_format=ProseModel,
+            )
+        except Exception as exc:  # noqa: BLE001 — degrade to a deterministic report
+            # An SDK/validation/transport error must not sink the whole report:
+            # synthesis is the last stage, so a raise here would break the
+            # pipeline's "always return a FinalReport" contract. Fall back to
+            # empty prose; the computed tables/citations still build.
+            self.logger.warning("synthesis.parse_failed", error=str(exc))
+            return empty
         if resp.usage is not None:
             context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
         # parsed_output is None only if the model refused or was cut off
         # (max_tokens) before producing a complete object — degrade to empty
         # prose so the deterministic tables/citations still build.
-        return resp.parsed_output or ProseModel(
-            executive_summary="", literature_insights="", event_summaries=[]
-        )
+        return resp.parsed_output or empty
 
     def _fact_check(
         self, report: FinalReport, orbital: OrbitalReport, neo_data: Any

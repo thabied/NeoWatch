@@ -136,6 +136,11 @@ class OrchestratorAgent(BaseAgent):
             if resp.usage is not None:
                 context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
             if resp.stop_reason != "tool_use":
+                # end_turn is the normal exit. max_tokens/refusal mean Sonnet was
+                # cut off or declined mid-plan, so we may be dispatching on partial
+                # planning — log it rather than swallowing it silently.
+                if resp.stop_reason in ("max_tokens", "refusal"):
+                    self.logger.warning("orchestrator.early_stop", stop_reason=resp.stop_reason)
                 break
 
             messages.append({"role": "assistant", "content": resp.content})
