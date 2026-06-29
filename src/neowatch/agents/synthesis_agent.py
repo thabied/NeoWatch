@@ -15,11 +15,10 @@ outputs, so the model can describe the data but never fabricate it.
 
 from __future__ import annotations
 
-import json
-import re
 from typing import Any
 
 from anthropic import AsyncAnthropic
+from pydantic import BaseModel
 from structlog.typing import FilteringBoundLogger
 
 from ..calc.models import OrbitalReport, RiskAssessment
@@ -27,7 +26,7 @@ from ..config import Settings
 from ..context import AgentContext, AgentResult, ProgressCallback
 from ..guardrails.factcheck import FactCheckLayer, build_grounding_context
 from ..llm import get_anthropic_client
-from ..prompts.system_prompts import SYNTHESIS_V1, SYNTHESIS_VERSION
+from ..prompts.system_prompts import SYNTHESIS_V2, SYNTHESIS_VERSION
 from ..rag.models import RetrievedPaper
 from .base import BaseAgent
 from .models import (
@@ -39,7 +38,28 @@ from .models import (
     RiskTableRow,
 )
 
-_JSON_RE = re.compile(r"\{.*\}", re.DOTALL)
+
+class EventSummary(BaseModel):
+    """One LLM-written sentence tied to a specific computed object by its id."""
+
+    object_id: str
+    summary: str
+
+
+class ProseModel(BaseModel):
+    """The exact prose shape Sonnet must return.
+
+    Passing this to ``messages.parse(output_format=...)`` turns the shape into a
+    JSON schema the API *enforces* — so we get a validated object back instead of
+    free text we have to scrape. This replaces the old "ask for JSON, then match
+    it with a greedy ``\\{.*\\}`` regex" approach, whose failure mode was silent:
+    any stray braces in surrounding prose made the regex over-match, the parse
+    returned ``{}``, and the report came back empty with no error.
+    """
+
+    executive_summary: str
+    literature_insights: str
+    event_summaries: list[EventSummary]
 
 
 class SynthesisAgent(BaseAgent):
@@ -68,13 +88,13 @@ class SynthesisAgent(BaseAgent):
 
         prose = await self._write_prose(context, orbital, papers)
 
-        events = _build_events(orbital, prose.get("event_summaries", []))
+        events = _build_events(orbital, prose.event_summaries)
         report = FinalReport(
             query=context.query,
-            executive_summary=str(prose.get("executive_summary", "")),
+            executive_summary=prose.executive_summary,
             neo_events=events,
             orbital_risk_table=_build_risk_table(orbital),
-            literature_insights=str(prose.get("literature_insights", "")),
+            literature_insights=prose.literature_insights,
             data_sources=_build_citations(neo_data, papers, images),
             images=images,
             prompt_version=SYNTHESIS_VERSION,
@@ -88,21 +108,32 @@ class SynthesisAgent(BaseAgent):
 
     async def _write_prose(
         self, context: AgentContext, orbital: OrbitalReport, papers: list[RetrievedPaper]
-    ) -> dict[str, Any]:
-        """Ask Sonnet for the prose JSON, fenced to the grounding block."""
+    ) -> ProseModel:
+        """Ask Sonnet for the prose as a schema-validated object (structured outputs).
+
+        ``messages.parse(output_format=ProseModel)`` constrains the model to our
+        schema and hands back a validated ``ProseModel`` on ``parsed_output`` —
+        no regex, no silent empty-report failure. ``temperature`` is still valid
+        on Sonnet 4.6, so we keep a little warmth for readable prose.
+        """
         grounding = _grounding_text(context.query, orbital, papers)
         client = self.client or get_anthropic_client(self.settings)
-        resp = await client.messages.create(
+        resp = await client.messages.parse(
             model=self.settings.sonnet_model,
             max_tokens=4096,
             temperature=0.4,  # a little warmth for readable prose, still grounded
-            system=SYNTHESIS_V1,
+            system=SYNTHESIS_V2,
             messages=[{"role": "user", "content": grounding}],
+            output_format=ProseModel,
         )
         if resp.usage is not None:
             context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)
-        text = "".join(block.text for block in resp.content if block.type == "text")
-        return _parse_prose(text)
+        # parsed_output is None only if the model refused or was cut off
+        # (max_tokens) before producing a complete object — degrade to empty
+        # prose so the deterministic tables/citations still build.
+        return resp.parsed_output or ProseModel(
+            executive_summary="", literature_insights="", event_summaries=[]
+        )
 
     def _fact_check(
         self, report: FinalReport, orbital: OrbitalReport, neo_data: Any
@@ -135,12 +166,11 @@ class SynthesisAgent(BaseAgent):
 # --- deterministic assembly helpers (no LLM) -------------------------------
 
 
-def _build_events(orbital: OrbitalReport, summaries: list[Any]) -> list[NEOEventReport]:
+def _build_events(
+    orbital: OrbitalReport, summaries: list[EventSummary]
+) -> list[NEOEventReport]:
     """Pair each computed analysis/risk with its (optional) one-line LLM summary."""
-    by_id: dict[str, str] = {}
-    for entry in summaries:
-        if isinstance(entry, dict) and "object_id" in entry:
-            by_id[str(entry["object_id"])] = str(entry.get("summary", ""))
+    by_id: dict[str, str] = {s.object_id: s.summary for s in summaries}
     risks: dict[str, RiskAssessment] = {r.object_id: r for r in orbital.risks}
     events: list[NEOEventReport] = []
     for a in orbital.analyses:
@@ -226,18 +256,6 @@ def _grounding_text(
     else:
         lines.append("- (none)")
     return "\n".join(lines)
-
-
-def _parse_prose(text: str) -> dict[str, Any]:
-    """Best-effort parse of the model's JSON prose block; empty dict on failure."""
-    match = _JSON_RE.search(text)
-    if not match:
-        return {}
-    try:
-        parsed = json.loads(match.group(0))
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _as_papers(value: Any) -> list[RetrievedPaper]:

@@ -68,12 +68,22 @@ class FetchAgent(BaseAgent):
                     # We build the API payload as plain dicts; cast at the boundary
                     # because the SDK's TypedDicts are stricter than our hand-built
                     # JSON-schema dicts (e.g. extra input_schema keys).
+                    #
+                    # cache_control here turns on top-level auto-caching: the SDK
+                    # marks the last cacheable block (the growing message history)
+                    # as an ephemeral cache breakpoint. The raw NASA tool results
+                    # we carry across iterations (~4.8k tokens, above Haiku 4.5's
+                    # 4096-token cache minimum) are then re-read at ~0.1x on every
+                    # iteration after the first instead of paying full input price
+                    # each loop. Verify on a live run via
+                    # resp.usage.cache_read_input_tokens > 0 on later iterations.
                     resp = await anthropic.messages.create(
                         model=self.settings.haiku_model,
                         max_tokens=1024,
                         system=_FETCH_SYSTEM,
                         tools=cast("list[ToolParam]", FETCH_TOOLS),
                         messages=cast("list[MessageParam]", messages),
+                        cache_control={"type": "ephemeral"},
                     )
                     if resp.usage is not None:
                         context.add_tokens(resp.usage.input_tokens + resp.usage.output_tokens)

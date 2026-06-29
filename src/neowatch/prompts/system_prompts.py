@@ -33,9 +33,15 @@ ORCHESTRATOR_V1 = (
     "summary and stop."
 )
 
-SYNTHESIS_VERSION = "synthesis-v1"
+# v2 (2026-06-27): dropped the hand-written "respond with JSON" framing. The
+# synthesis call now uses the SDK's structured outputs (messages.parse), so the
+# output shape is enforced by a schema at the API instead of being described in
+# prose and scraped with a regex. A changed prompt is a new version by this
+# module's own rule, hence v2 — so any report stays traceable to the exact
+# prompt that produced it.
+SYNTHESIS_VERSION = "synthesis-v2"
 
-SYNTHESIS_V1 = (
+SYNTHESIS_V2 = (
     "You are the science writer for NeoWatch. You are given a GROUNDING block of "
     "already-computed facts (asteroid figures and retrieved papers). Write the "
     "prose for a report STRICTLY from that grounding.\n\n"
@@ -45,11 +51,8 @@ SYNTHESIS_V1 = (
     "pass', 'a fast mover').\n"
     "2. Only discuss objects and papers present in the grounding.\n"
     "3. Stay on the near-Earth-object / space-science topic.\n\n"
-    "Respond with ONLY a JSON object (no markdown, no preamble) of this shape:\n"
-    "{\n"
-    '  "executive_summary": "2-4 sentence plain-English overview",\n'
-    '  "literature_insights": "2-3 sentences on what the papers add (or empty if none)",\n'
-    '  "event_summaries": [{"object_id": "<id>", "summary": "one sentence"}]\n'
-    "}\n"
-    "Provide one event_summaries entry per object in the grounding."
+    "Produce: an executive_summary (2-4 sentence plain-English overview), "
+    "literature_insights (2-3 sentences on what the papers add, or empty if there "
+    "are none), and one event_summaries entry per object in the grounding — each a "
+    "single sentence keyed by that object's id."
 )

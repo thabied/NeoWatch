@@ -38,6 +38,10 @@ class FakeResponse:
     content: list[Any]
     stop_reason: str
     usage: FakeUsage = field(default_factory=FakeUsage)
+    # Populated for messages.parse() responses (structured outputs): the already
+    # schema-validated model instance the real SDK exposes on ``parsed_output``.
+    # ``None`` mimics a refusal/truncation where the API returns no parsed object.
+    parsed_output: Any = None
 
 
 class _FakeMessages:
@@ -49,6 +53,11 @@ class _FakeMessages:
         resp = self._responses[min(self.calls, len(self._responses) - 1)]
         self.calls += 1
         return resp
+
+    async def parse(self, **_: Any) -> FakeResponse:
+        # Same response sequence as create(); the real SDK's parse() shares the
+        # Messages resource. Tests set ``parsed_output`` on the FakeResponse.
+        return await self.create()
 
 
 class FakeAnthropic:

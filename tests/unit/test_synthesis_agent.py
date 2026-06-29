@@ -1,26 +1,27 @@
 """Unit tests for the synthesis agent (offline).
 
-Sonnet's prose JSON is served by ``FakeAnthropic``. We assert the assembled
-report validates as a ``FinalReport``, that numbers/tables/citations come from
-the (deterministic) grounding, and that a wrong figure in the prose is surfaced
-in ``confidence_notes`` by the fact-check layer.
+Sonnet's prose is served by ``FakeAnthropic`` as a schema-validated
+``ProseModel`` on ``parsed_output`` — mirroring the real SDK's structured-output
+``messages.parse``. We assert the assembled report validates as a ``FinalReport``,
+that numbers/tables/citations come from the (deterministic) grounding, and that a
+wrong figure in the prose is surfaced in ``confidence_notes`` by the fact-check
+layer.
 """
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 import pytest
 
 from neowatch.agents.models import FinalReport, NEOData
-from neowatch.agents.synthesis_agent import SynthesisAgent
+from neowatch.agents.synthesis_agent import EventSummary, ProseModel, SynthesisAgent
 from neowatch.calc.models import OrbitalAnalysis, OrbitalReport, RiskAssessment
 from neowatch.config import get_settings
 from neowatch.context import AgentContext
 from neowatch.prompts.system_prompts import SYNTHESIS_VERSION
 from neowatch.rag.models import RetrievedPaper
-from tests.unit.fakes import FakeAnthropic, FakeResponse, FakeTextBlock
+from tests.unit.fakes import FakeAnthropic, FakeResponse
 
 
 def _settings(monkeypatch: pytest.MonkeyPatch) -> Any:
@@ -67,12 +68,12 @@ def _context(monkeypatch: pytest.MonkeyPatch, event_summary: str) -> AgentContex
 
 
 def _prose_response(event_summary: str) -> FakeAnthropic:
-    payload = {
-        "executive_summary": "One object makes a close pass at 12 LD.",
-        "literature_insights": "Recent work focuses on detecting small asteroids.",
-        "event_summaries": [{"object_id": "X1", "summary": event_summary}],
-    }
-    return FakeAnthropic([FakeResponse([FakeTextBlock(json.dumps(payload))], "end_turn")])
+    parsed = ProseModel(
+        executive_summary="One object makes a close pass at 12 LD.",
+        literature_insights="Recent work focuses on detecting small asteroids.",
+        event_summaries=[EventSummary(object_id="X1", summary=event_summary)],
+    )
+    return FakeAnthropic([FakeResponse([], "end_turn", parsed_output=parsed)])
 
 
 async def test_synthesis_builds_valid_final_report(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -117,16 +118,52 @@ async def test_wrong_number_surfaces_in_confidence_notes(monkeypatch: pytest.Mon
     get_settings.cache_clear()
 
 
-async def test_malformed_prose_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
-    """If the model returns non-JSON, the report is still well-formed (empty prose)."""
+async def test_missing_parsed_output_does_not_crash(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A refusal/truncation (no parsed object) degrades to empty prose, not a crash."""
     settings = _settings(monkeypatch)
     context = _context(monkeypatch, "n/a")
-    fake = FakeAnthropic([FakeResponse([FakeTextBlock("sorry, no JSON here")], "end_turn")])
+    # parsed_output=None mimics the API returning no validated object (refusal or
+    # max_tokens cut-off mid-generation).
+    fake = FakeAnthropic([FakeResponse([], "refusal", parsed_output=None)])
     agent = SynthesisAgent(settings, client=fake)
 
     result = await agent.run(context)
     report = result.data
     assert isinstance(report, FinalReport)
-    assert report.executive_summary == ""  # parse failed -> empty, not a crash
+    assert report.executive_summary == ""  # no parsed object -> empty, not a crash
     assert len(report.orbital_risk_table) == 1  # deterministic parts still built
+    get_settings.cache_clear()
+
+
+async def test_brace_laden_prose_yields_populated_report(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Prose full of literal braces — which broke the old greedy ``\\{.*\\}`` regex —
+    now flows through structured outputs into a populated report.
+
+    The previous ``_parse_prose`` searched the raw text for ``\\{.*\\}`` (greedy,
+    DOTALL). A model reply like ``Sure: {...} hope that helps {note}`` made the
+    regex over-match, ``json.loads`` failed, and the report came back silently
+    empty. With ``messages.parse`` the validated object is returned directly, so
+    braces in the prose are just text and are preserved verbatim.
+    """
+    settings = _settings(monkeypatch)
+    context = _context(monkeypatch, "n/a")
+    parsed = ProseModel(
+        executive_summary="Risk set {Torino 0}; see paper {2401.00001} for context.",
+        literature_insights="Methods weigh detection {recall vs. precision}.",
+        event_summaries=[EventSummary(object_id="X1", summary="A routine flyby {low risk}.")],
+    )
+    agent = SynthesisAgent(
+        settings, client=FakeAnthropic([FakeResponse([], "end_turn", parsed_output=parsed)])
+    )
+
+    result = await agent.run(context)
+    report = result.data
+
+    assert isinstance(report, FinalReport)
+    # Brace-laden prose preserved exactly — no over-match, no empty report.
+    assert report.executive_summary == "Risk set {Torino 0}; see paper {2401.00001} for context."
+    assert report.neo_events[0].summary == "A routine flyby {low risk}."
+    assert "{recall vs. precision}" in report.literature_insights
     get_settings.cache_clear()

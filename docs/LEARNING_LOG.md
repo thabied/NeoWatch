@@ -12,6 +12,131 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-06-29 — Tier 1 implemented: structured outputs + prompt caching
+
+**Files:** `agents/synthesis_agent.py`, `agents/fetch_agent.py`,
+`prompts/system_prompts.py`, `tests/unit/fakes.py`, `tests/unit/test_synthesis_agent.py`.
+
+This turned the two top backlog items from [`IMPROVEMENTS.md`](IMPROVEMENTS.md) into
+code. The *lessons* from 2026-06-27 predicted the wins; this entry records how they
+played out in practice and the few things that only become clear once you write it.
+
+### #1 — Structured outputs replace the regex (synthesis)
+
+**What.** Sonnet's prose is now requested with `client.messages.parse(...,
+output_format=ProseModel)` instead of `messages.create` + a greedy `\{.*\}` regex +
+`json.loads`. `ProseModel` is a Pydantic model (`executive_summary`,
+`literature_insights`, `event_summaries: list[EventSummary]`); the SDK turns it into a
+JSON schema the API enforces and hands back a validated object on `resp.parsed_output`.
+The `_JSON_RE` constant and `_parse_prose` method are gone.
+
+**Why it matters concretely.** The old failure was *silent*: any stray brace in the
+model's surrounding prose made the regex over-match, `json.loads` threw, and the report
+came back **empty with no error**. The new regression test
+`test_brace_laden_prose_yields_populated_report` feeds prose stuffed with literal braces
+(`"Risk set {Torino 0}…"`, `"A routine flyby {low risk}."`) and asserts they survive
+*verbatim* into the report — exactly the input that used to zero it out.
+
+**Trade-offs / things learned.**
+- `parsed_output` can still be `None` — on a refusal or a `max_tokens` truncation the
+  API returns no complete object. So I kept a graceful degrade:
+  `resp.parsed_output or ProseModel(empty)`. The deterministic tables/citations still
+  build; you lose only the prose. "Degrade, don't crash" survives the rewrite.
+- **The schema is now the contract, so the prompt shouldn't also describe it.** I
+  dropped the "respond with JSON" framing from the system prompt — describing the shape
+  in prose *and* enforcing it by schema is redundant and can even conflict. By the
+  project's own rule (a behaviour-changing prompt edit = a new version) this bumped
+  `SYNTHESIS_V1 → SYNTHESIS_V2` / `synthesis-v2`, so every report stays traceable to the
+  prompt that made it. (Note: `IMPROVEMENTS.md` called it `SYNTHESIS_V1`; the version
+  bump is the faithful application of our own versioning rule.)
+- `temperature` is still valid alongside `output_format` on Sonnet 4.6, so we keep a
+  little warmth (0.4) for readable prose while the *shape* is hard-constrained.
+
+### #2 — Prompt caching on the FetchAgent loop
+
+**What.** Added `cache_control={"type": "ephemeral"}` to the Haiku `messages.create`
+call inside the tool-use loop. This is *top-level auto-caching*: the SDK marks the last
+cacheable block (the growing message history) as an ephemeral breakpoint, so each
+iteration after the first re-reads the accumulated NASA tool results at ~0.1× instead of
+full input price.
+
+**Why here and nowhere else.** This is the 2026-06-27 lesson made literal: caching only
+fires above the model's minimum cacheable prefix (Haiku 4.5 = 4096 tokens). FetchAgent's
+history carries ~4.8k tokens of raw tool results — *above* the floor, so it pays off.
+The orchestrator loop carries only tiny status strings — *below* the floor — so we
+deliberately did **not** cache it (it'd be a no-op). Optimise where the tokens actually
+are.
+
+**How to verify it's live.** On a real run, check `resp.usage.cache_read_input_tokens >
+0` on the 2nd+ iterations. (The offline suite can't see this — `FakeAnthropic` doesn't
+model cache accounting — so this is a live-run check, noted in the code comment.)
+
+### Testing notes (offline, zero paid calls)
+- `FakeAnthropic` grew a `parse()` method (shares the response queue with `create()`)
+  and `FakeResponse` grew a `parsed_output` field — so tests inject a ready-made
+  `ProseModel` exactly where the real SDK would put the validated object.
+- New/changed tests: the brace regression test above, plus
+  `test_missing_parsed_output_does_not_crash` (feeds `parsed_output=None`,
+  `stop_reason="refusal"`, asserts empty summary but tables still built).
+- **Both new params are typed in SDK 0.111.0** (`parse(output_format=)` and
+  `create(cache_control=)`), so `mypy --strict` needs no `# type: ignore`. I checked the
+  SDK source for this before writing code rather than guessing — and confirmed the
+  attribute is `parsed_output` (a property), not `.parsed`.
+
+**Verification:** `ruff` clean, `mypy src/` clean (49 files), **78 tests pass**
+(`pytest tests/unit tests/integration/test_smoke.py`).
+
+---
+
+## 2026-06-27 — Architecture review: improvement findings + a Claude Code lesson
+
+No code changed today — this was a full read-through of the system to find what to
+improve next. The actionable backlog lives in [`IMPROVEMENTS.md`](IMPROVEMENTS.md);
+this entry captures the *lessons*, which are the durable part.
+
+### What the review confirmed (the good)
+The deterministic-core / LLM-shell discipline is consistent everywhere, and it has a
+cost consequence worth naming: **large payloads never enter the model context.** NEO
+data, papers, and images are parked on the `session_cache` blackboard; only short
+status strings ("Fetched 10 close-approach objects.") flow through the orchestrator's
+LLM loop. That's why several "obvious" token optimisations don't apply here — the
+architecture already starves the LLM of tokens by design. The one exception is
+`FetchAgent`, whose Haiku loop *does* carry the raw NASA tool results in its message
+history (this is what spent ~4.8k tokens and caused the budget bug).
+
+### Three lessons for later
+1. **Structured outputs beat regex parsing of LLM JSON.** `synthesis_agent.py` asks
+   Sonnet for JSON and scrapes it with a greedy `\{.*\}` regex. If the model wraps the
+   JSON in any prose containing braces, the parse silently yields `{}` → an empty
+   report, no error. The SDK's `messages.parse(output_format=PydanticModel)` (Sonnet
+   4.6 supports it) *guarantees* schema-valid output. Lesson: when you need JSON from a
+   model, constrain it at the API, don't pattern-match the text afterwards.
+2. **Prompt caching pays off exactly where tokens accumulate — not everywhere.**
+   Adding `cache_control` to an agentic loop lets later iterations re-read earlier turns
+   at ~0.1×. But it only fires above a model's minimum cacheable prefix (Haiku 4.5:
+   4096 tokens). The orchestrator loop is *below* that (status strings are tiny), so
+   caching it is a near-no-op; FetchAgent is *above* it, so that's where to cache.
+   Lesson: measure where the tokens actually are before optimising — here the
+   architecture's own frugality concentrates the win in one place.
+3. **A "token budget" must mean one thing.** `context.tokens_used` accumulates
+   *cumulative billed cost* (input+output every call), but the compression path
+   re-baselines it to a *char-estimate of current history size* — silently switching
+   the number's meaning mid-run, which is how the original mis-scoping hid. Lesson:
+   cost-budget and context-footprint are two different quantities; track them
+   separately rather than overloading one counter.
+
+### The meta-lesson: manage context by task boundary, not by clock
+We decided to move the implementation work to a **fresh conversation** rather than
+continue this one. The reasoning is a reusable Claude Code heuristic: **start fresh
+when the next task doesn't need the specific working context you've accumulated, and
+what it *does* need is already on disk.** This session had loaded the entire Claude API
+reference (huge) for the review — dead weight for implementation — while everything the
+next task needs is in the repo + this log + `IMPROVEMENTS.md`. The durable memory of a
+Claude Code project is the filesystem (code, learning log, memory files), not the chat;
+scoping conversations to coherent tasks keeps both cost and fidelity high.
+
+---
+
 ## 2026-06-25 — Gallery fix: Gradio won't serve un-allowed local files
 
 **Files:** `config.py`, `agents/image_agent.py`, `main.py`, `app.py`, `.gitignore`.
