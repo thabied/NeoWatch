@@ -7,6 +7,7 @@ from neowatch.agents.models import (
     FinalReport,
     ImageAsset,
     NEOEventReport,
+    ReportSection,
     RiskTableRow,
 )
 from neowatch.ui.render import gallery_items, report_to_markdown, risk_table_dataframe
@@ -94,3 +95,37 @@ def test_gallery_items_prefer_local_path_and_carry_credit() -> None:
     """Gallery uses the cached local copy and pairs it with the attribution credit."""
     items = gallery_items(_report())
     assert items == [("/tmp/andromeda.png", "Andromeda — credit: NASA / APOD")]
+
+
+def test_generic_report_section_renders_title_body_and_table() -> None:
+    """A non-NEO vertical's section renders as a heading, prose, and a markdown table."""
+    report = FinalReport(
+        query="space weather now",
+        report_sections=[
+            ReportSection(
+                title="Space weather",
+                body_markdown="A minor geomagnetic storm is underway.",
+                rows=[{"Metric": "Kp", "Value": "5"}, {"Metric": "Storm", "Value": "G1"}],
+            )
+        ],
+    )
+    md = report_to_markdown(report)
+    assert "### Space weather" in md
+    assert "A minor geomagnetic storm is underway." in md
+    # Header row, separator, and both data rows of the markdown table.
+    assert "| Metric | Value |" in md
+    assert "| --- | --- |" in md
+    assert "| Kp | 5 |" in md
+    assert "| Storm | G1 |" in md
+
+
+def test_section_without_rows_renders_no_table() -> None:
+    """A section with no rows renders its prose but emits no empty table."""
+    report = FinalReport(
+        query="q",
+        report_sections=[ReportSection(title="Notes", body_markdown="Just prose.")],
+    )
+    md = report_to_markdown(report)
+    assert "### Notes" in md
+    assert "Just prose." in md
+    assert "|" not in md  # no table pipes at all

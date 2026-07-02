@@ -24,6 +24,8 @@ from structlog.typing import FilteringBoundLogger
 from ..calc.models import OrbitalReport, RiskAssessment
 from ..config import Settings
 from ..context import AgentContext, AgentResult, ProgressCallback
+from ..domains.base import DomainContribution
+from ..domains.registry import contributions
 from ..guardrails.factcheck import FactCheckLayer, build_grounding_context
 from ..llm import get_anthropic_client
 from ..prompts.system_prompts import SYNTHESIS_V2, SYNTHESIS_VERSION
@@ -86,7 +88,13 @@ class SynthesisAgent(BaseAgent):
         images = _as_images(context.session_cache.get("images"))
         neo_data = context.session_cache.get("neo_data")
 
-        prose = await self._write_prose(context, orbital, papers)
+        # Gather any non-NEO vertical contributions once: their grounding feeds the
+        # prose model (so a non-NEO query still gets a grounded summary) and their
+        # sections/citations are assembled into the report below.
+        domain_contribs = _collect_contributions(context)
+        extra_grounding = [c.grounding for c in domain_contribs if c.grounding]
+
+        prose = await self._write_prose(context, orbital, papers, extra_grounding)
 
         events = _build_events(orbital, prose.event_summaries)
         report = FinalReport(
@@ -95,10 +103,13 @@ class SynthesisAgent(BaseAgent):
             neo_events=events,
             orbital_risk_table=_build_risk_table(orbital),
             literature_insights=prose.literature_insights,
+            report_sections=[c.section for c in domain_contribs if c.section is not None],
             data_sources=_build_citations(neo_data, papers, images),
             images=images,
             prompt_version=SYNTHESIS_VERSION,
         )
+        for contribution in domain_contribs:
+            report.data_sources.extend(contribution.citations)
 
         report.confidence_notes = self._fact_check(report, orbital, neo_data)
         self.logger.info(
@@ -107,7 +118,11 @@ class SynthesisAgent(BaseAgent):
         return AgentResult(agent_name="SynthesisAgent", success=True, data=report)
 
     async def _write_prose(
-        self, context: AgentContext, orbital: OrbitalReport, papers: list[RetrievedPaper]
+        self,
+        context: AgentContext,
+        orbital: OrbitalReport,
+        papers: list[RetrievedPaper],
+        extra_grounding: list[str],
     ) -> ProseModel:
         """Ask Sonnet for the prose as a schema-validated object (structured outputs).
 
@@ -115,8 +130,11 @@ class SynthesisAgent(BaseAgent):
         schema and hands back a validated ``ProseModel`` on ``parsed_output`` —
         no regex, no silent empty-report failure. ``temperature`` is still valid
         on Sonnet 4.6, so we keep a little warmth for readable prose.
+
+        ``extra_grounding`` holds any non-NEO vertical blocks, appended to the
+        grounding so the model can summarise those domains too without inventing.
         """
-        grounding = _grounding_text(context.query, orbital, papers)
+        grounding = _grounding_text(context.query, orbital, papers, extra_grounding)
         client = self.client or get_anthropic_client(self.settings)
         empty = ProseModel(executive_summary="", literature_insights="", event_summaries=[])
         try:
@@ -240,8 +258,21 @@ def _build_citations(
     return citations
 
 
+def _collect_contributions(context: AgentContext) -> list[DomainContribution]:
+    """Run each opted-in vertical's contribution function against the run context."""
+    collected: list[DomainContribution] = []
+    for contribute in contributions():
+        contribution = contribute(context)
+        if contribution is not None:
+            collected.append(contribution)
+    return collected
+
+
 def _grounding_text(
-    query: str, orbital: OrbitalReport, papers: list[RetrievedPaper]
+    query: str,
+    orbital: OrbitalReport,
+    papers: list[RetrievedPaper],
+    extra: list[str],
 ) -> str:
     """Render the grounding block the model must stay within."""
     lines = [f"USER QUERY: {query}", "", "OBJECTS (computed figures):"]
@@ -262,6 +293,9 @@ def _grounding_text(
             lines.append(f"- {p.arxiv_id}: {p.title} — {p.abstract[:200]}")
     else:
         lines.append("- (none)")
+    # Non-NEO vertical grounding blocks, each already formatted by its vertical.
+    for block in extra:
+        lines += ["", block]
     return "\n".join(lines)
 
 

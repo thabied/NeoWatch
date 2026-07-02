@@ -12,6 +12,8 @@ widgets.
 
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 from ..agents.models import FinalReport
@@ -49,6 +51,16 @@ def report_to_markdown(report: FinalReport) -> str:
     if report.literature_insights:
         parts.append("### Literature insights")
         parts.append(report.literature_insights)
+
+    # Generic sections contributed by non-NEO verticals (space weather, Earth
+    # events…). Rendered uniformly so the UI needs no per-domain knowledge.
+    for section in report.report_sections:
+        parts.append(f"### {section.title}")
+        if section.body_markdown:
+            parts.append(section.body_markdown)
+        table = _rows_to_markdown_table(section.rows)
+        if table:
+            parts.append(table)
 
     if report.confidence_notes:
         parts.append("### Confidence notes")
@@ -91,6 +103,24 @@ def gallery_items(report: FinalReport) -> list[tuple[str, str]]:
         source = image.local_path or image.url
         items.append((source, image.credit))
     return items
+
+
+def _rows_to_markdown_table(rows: list[dict[str, Any]]) -> str:
+    """Render a section's optional rows as a GitHub-flavoured markdown table.
+
+    Columns are taken from the first row's keys (each section builds rows with a
+    stable shape). Empty ``rows`` yields an empty string so the caller can skip it.
+    """
+    if not rows:
+        return ""
+    headers = list(rows[0].keys())
+    lines = [
+        "| " + " | ".join(headers) + " |",
+        "| " + " | ".join("---" for _ in headers) + " |",
+    ]
+    for row in rows:
+        lines.append("| " + " | ".join(str(row.get(h, "")) for h in headers) + " |")
+    return "\n".join(lines)
 
 
 def _citations_section(report: FinalReport) -> str:

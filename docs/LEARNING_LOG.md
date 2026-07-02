@@ -12,6 +12,57 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-07-02 — Domain registry: generalise the framework, specialise the verticals
+
+**Why:** NeoWatch was hard-wired to near-Earth objects in *three* layers, not one — the
+orchestrator's tool list + `if tool_name == …` dispatch, the input guardrail's allow-list,
+and the synthesis report's fields (`neo_events`, `orbital_risk_table`). Adding any new
+science domain (space weather, Earth events) would have meant editing all three agents.
+This is the groundwork (Phase 0) for that expansion: make domains *pluggable* first, then
+drop new ones in.
+
+**Files:** new `domains/` package (`base.py`, `neo.py`, `registry.py`, `__init__.py`);
+edits to `agents/orchestrator.py`, `agents/synthesis_agent.py`, `guardrails/domain.py`,
+`agents/models.py`, `ui/render.py`; new `tests/unit/test_registry.py` + render tests.
+
+### The shape: a `Vertical` is data, not code branches
+
+Each science domain is now declared as a `Vertical` dataclass bundling: its `Capability`
+list (one per orchestrator tool — a tool schema + an agent factory + the blackboard
+`cache_key` its output is parked under + a `summarise` fn for the planner's status line),
+the `topics` that widen the guardrail's allow-list, and an optional `contribute` fn that
+adds a report section/grounding/citations. `REGISTRY` is the single source of truth; the
+orchestrator, guardrail, and synthesis all *derive* from it via small accessors
+(`orchestrator_tools()`, `capability_map()`, `domain_topics()`, `contributions()`).
+
+### Lessons
+
+- **Generalise the framework, specialise the verticals.** The interesting move isn't
+  "hit more APIs" — it's making the multi-agent skeleton domain-agnostic so the *next*
+  domain is config, not surgery. The registry is that seam. Adding a vertical = append to
+  `REGISTRY` + write its data client/agent/core; the three framing agents don't change.
+- **Refactor additively on a fact-checked path; don't big-bang it.** The synthesis agent
+  is the anti-hallucination core (grounding + post-hoc fact-check). Rather than rewrite it
+  around generic sections, NEO keeps its bespoke `neo_events` path (`contribute=None`) and
+  *new* verticals render through an additive `report_sections` hook. Net behaviour for NEO
+  queries is byte-identical — the whole 89-test suite stayed green through the refactor,
+  which is the proof the seam didn't move existing behaviour.
+- **Preserve injection seams when you move construction.** The orchestrator used to build
+  its four agents inline; tests inject stubs via `fetch_agent=/calc_agent=/…`. The default
+  set now comes from `capability_map()`, but a name-keyed override map keeps that
+  constructor API intact — so the refactor is invisible to every existing test.
+- **Watch for import cycles when a low layer becomes a hub.** The registry imports the
+  agent classes (to build them), and the orchestrator/guardrail/synthesis import the
+  registry. Splitting the dataclasses into `domains/base.py` (no registry import) from
+  `domains/registry.py` (assembles concrete verticals) keeps `neo.py` free to import
+  `base` without a cycle back through `registry`.
+- **Deterministic sections keep the discipline.** `ReportSection.body_markdown`/`rows` are
+  built in Python from a vertical's computed core, not LLM prose — same "model writes
+  prose, Python assembles facts" rule as the NEO path. The `grounding` field lets a
+  vertical still feed the executive-summary model so a non-NEO query gets a grounded
+  overview. (Extending the *numeric fact-check* to new domains is deferred — noted for the
+  vertical PRs that add real figures.)
+
 ## 2026-06-29 — Tier 3 implemented: early-stop logs, topic imagery, parse guard
 
 **Files:** `agents/fetch_agent.py`, `agents/orchestrator.py`, `agents/synthesis_agent.py`,

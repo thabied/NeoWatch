@@ -28,44 +28,24 @@ from structlog.typing import FilteringBoundLogger
 
 from ..config import Settings
 from ..context import AgentContext, AgentResult, ProgressCallback
+from ..domains.registry import capability_map, orchestrator_tools
 from ..guardrails.domain import DomainGuardrail
 from ..guardrails.token_budget import TokenBudgetGuardrail
 from ..llm import get_anthropic_client
 from ..prompts.system_prompts import ORCHESTRATOR_V1
 from .base import BaseAgent
-from .calc_agent import CalcAgent
-from .fetch_agent import FetchAgent
-from .image_agent import ImageAgent
-from .models import NEOData
-from .rag_agent import RAGAgent
 
 _MAX_ITERATIONS = 6
 
-# Each specialist agent is surfaced to Sonnet as a tool. Inputs are intentionally
-# minimal — Sonnet decides *whether* to call, not low-level arguments (the agents
-# read what they need from the query/context themselves).
-ORCHESTRATOR_TOOLS: list[dict[str, Any]] = [
-    {
-        "name": "fetch_neo_data",
-        "description": "Fetch near-Earth objects approaching Earth from NASA (call first).",
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "analyze_orbits",
-        "description": "Compute miss distance, velocity, size and risk bands for fetched objects.",
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "search_literature",
-        "description": "Retrieve relevant scientific papers for the query's topic.",
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-    {
-        "name": "fetch_images",
-        "description": "Fetch NASA astronomy images for the relevant period.",
-        "input_schema": {"type": "object", "properties": {}, "additionalProperties": False},
-    },
-]
+# Which constructor override maps to which registered tool name. This keeps the
+# old ``fetch_agent=/calc_agent=/…`` injection API (used by tests to supply
+# offline stubs) working after the default agent set moved into the registry.
+_OVERRIDE_TOOLS = {
+    "fetch_agent": "fetch_neo_data",
+    "calc_agent": "analyze_orbits",
+    "rag_agent": "search_literature",
+    "image_agent": "fetch_images",
+}
 
 
 class OrchestratorAgent(BaseAgent):
@@ -85,15 +65,27 @@ class OrchestratorAgent(BaseAgent):
         super().__init__(settings, logger)
         self.client = client
         self.progress = progress
-        # Agents are injectable so tests can supply offline stubs; otherwise the
-        # real specialists are built (sharing the injected client where they use
-        # one, so a test's FakeAnthropic flows all the way down).
+        # The registry is the source of truth for which tools exist and which
+        # agent runs each. Build the default specialist set from it (sharing the
+        # injected client where an agent uses one, so a test's FakeAnthropic flows
+        # all the way down), then let any explicit override replace an agent by
+        # tool name — preserving the old injection API for offline stubs.
+        self._capabilities = capability_map()
+        self._tools = orchestrator_tools()
         self.agents: dict[str, BaseAgent] = {
-            "fetch_neo_data": fetch_agent or FetchAgent(settings, client=client),
-            "analyze_orbits": calc_agent or CalcAgent(settings, client=client),
-            "search_literature": rag_agent or RAGAgent(settings),
-            "fetch_images": image_agent or ImageAgent(settings),
+            name: cap.build_agent(settings, client)
+            for name, cap in self._capabilities.items()
         }
+        overrides = {
+            "fetch_agent": fetch_agent,
+            "calc_agent": calc_agent,
+            "rag_agent": rag_agent,
+            "image_agent": image_agent,
+        }
+        for arg, tool_name in _OVERRIDE_TOOLS.items():
+            override = overrides[arg]
+            if override is not None:
+                self.agents[tool_name] = override
         self.domain_guardrail = DomainGuardrail(settings, client=client)
         # Watch the *whole-session* budget here, not the per-single-call cap: this
         # guardrail tracks the orchestrator's cumulative context across every agent
@@ -130,7 +122,7 @@ class OrchestratorAgent(BaseAgent):
                 max_tokens=2048,
                 temperature=0.2,  # low: planning should be near-deterministic
                 system=ORCHESTRATOR_V1,
-                tools=cast("list[ToolParam]", ORCHESTRATOR_TOOLS),
+                tools=cast("list[ToolParam]", self._tools),
                 messages=cast("list[MessageParam]", messages),
             )
             if resp.usage is not None:
@@ -174,21 +166,12 @@ class OrchestratorAgent(BaseAgent):
         if not result.success:
             return f"{tool_name} failed: {result.error}"
 
-        # Park each agent's typed output on the shared blackboard for synthesis.
-        if tool_name == "fetch_neo_data":
-            context.session_cache["neo_data"] = result.data
-            count = len(result.data.feed_items) if isinstance(result.data, NEOData) else 0
-            return f"Fetched {count} close-approach objects."
-        if tool_name == "analyze_orbits":
-            context.session_cache["orbital_report"] = result.data
-            return f"Analysed {len(result.data.analyses)} objects with risk bands."
-        if tool_name == "search_literature":
-            context.session_cache["papers"] = result.data
-            return f"Found {len(result.data)} relevant papers."
-        if tool_name == "fetch_images":
-            context.session_cache["images"] = result.data
-            return f"Prepared {len(result.data)} images."
-        return "Done."
+        # Park the agent's typed output on the shared blackboard under the
+        # capability's key (where synthesis reads it), then summarise it for the
+        # planner — both come from the registry descriptor, no per-tool branches.
+        capability = self._capabilities[tool_name]
+        context.session_cache[capability.cache_key] = result.data
+        return capability.summarise(result.data)
 
     def _emit(self, message: str) -> None:
         """Send a progress update to the UI hook, if one is attached."""

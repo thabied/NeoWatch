@@ -15,6 +15,8 @@ Implemented across Phase 4 (NEOData, ImageAsset) and Phase 6 (FinalReport).
 
 from __future__ import annotations
 
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from ..data.models import EphemerisData, NEODetail, NEOFeedItem, SpaceWeatherReport
@@ -99,6 +101,22 @@ class RiskTableRow(BaseModel):
     risk_band: str
 
 
+class ReportSection(BaseModel):
+    """A generic, renderable report block contributed by a non-NEO vertical.
+
+    The original NEO domain renders through the bespoke ``neo_events`` /
+    ``orbital_risk_table`` fields. Verticals added later (space weather, Earth
+    events…) render through this instead, so synthesis and the UI stay
+    domain-agnostic. ``body_markdown`` and ``rows`` are built deterministically in
+    Python from the vertical's computed core — the same "LLM writes prose, Python
+    assembles facts" discipline the rest of the report follows.
+    """
+
+    title: str
+    body_markdown: str = ""
+    rows: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class FinalReport(BaseModel):
     """The single validated artifact the pipeline returns and the UI renders.
 
@@ -112,6 +130,7 @@ class FinalReport(BaseModel):
     neo_events: list[NEOEventReport] = Field(default_factory=list)
     orbital_risk_table: list[RiskTableRow] = Field(default_factory=list)
     literature_insights: str = ""
+    report_sections: list[ReportSection] = Field(default_factory=list)
     confidence_notes: list[str] = Field(default_factory=list)
     data_sources: list[Citation] = Field(default_factory=list)
     images: list[ImageAsset] = Field(default_factory=list)

@@ -20,6 +20,7 @@ from structlog.typing import FilteringBoundLogger
 
 from ..config import Settings
 from ..context import AgentContext
+from ..domains.registry import domain_topics
 from ..llm import get_anthropic_client
 from .models import GuardrailResult
 from .sanitise import detect_injection
@@ -40,14 +41,21 @@ _HARM_PATTERNS: tuple[str, ...] = (
     "deorbit on",
 )
 
-_DOMAIN_SYSTEM = (
-    "You are a strict topic classifier for a near-Earth-object research tool. "
-    "Answer with exactly one word, YES or NO, and nothing else. "
-    "Answer YES only if the message is about asteroids, comets, near-Earth "
-    "objects, meteors, space weather, orbital mechanics, planetary defence, or "
-    "closely related space science. Answer NO for everything else (recipes, "
-    "coding help, politics, general chit-chat, etc.)."
-)
+def _domain_system() -> str:
+    """Build the classifier prompt from the registered verticals' topics.
+
+    The allow-list is assembled from ``domain_topics()`` rather than hard-coded, so
+    registering a new vertical automatically widens what this guardrail accepts —
+    the guardrail never needs editing to admit a new science domain.
+    """
+    topics = ", ".join(domain_topics())
+    return (
+        "You are a strict topic classifier for a space-science research tool. "
+        "Answer with exactly one word, YES or NO, and nothing else. "
+        f"Answer YES only if the message is about {topics}, or closely related "
+        "space science. Answer NO for everything else (recipes, coding help, "
+        "politics, general chit-chat, etc.)."
+    )
 
 
 class DomainGuardrail:
@@ -111,7 +119,7 @@ class DomainGuardrail:
         if not await self._in_domain(query, context):
             return GuardrailResult(
                 allowed=False,
-                reason="Query is outside this tool's domain (near-Earth-object science).",
+                reason="Query is outside this tool's domain (space-science research).",
             )
 
         return GuardrailResult(allowed=True, reason="ok")
@@ -122,7 +130,7 @@ class DomainGuardrail:
         resp = await client.messages.create(
             model=self.settings.haiku_model,
             max_tokens=5,  # one word; keep the paid call tiny
-            system=_DOMAIN_SYSTEM,
+            system=_domain_system(),
             messages=[{"role": "user", "content": query}],
         )
         if context is not None and resp.usage is not None:
