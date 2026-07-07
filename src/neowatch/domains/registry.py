@@ -16,10 +16,11 @@ from typing import Any
 
 from .base import Capability, ContributeFn, DomainContribution, Vertical
 from .neo import NEO_VERTICAL
+from .space_weather import SPACE_WEATHER_VERTICAL
 
 # The registered science domains, in priority order. New verticals are appended
 # here — that single edit is what makes them "config, not surgery".
-REGISTRY: tuple[Vertical, ...] = (NEO_VERTICAL,)
+REGISTRY: tuple[Vertical, ...] = (NEO_VERTICAL, SPACE_WEATHER_VERTICAL)
 
 
 def all_capabilities() -> list[Capability]:

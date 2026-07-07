@@ -12,6 +12,70 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-07-07 — Space-weather vertical: the first pluggable domain
+
+**Why:** Phase 0 built the registry seam; this is the first proof it pays off. We added a
+whole new science domain — current geomagnetic activity (NOAA planetary Kp index → storm
+scale + aurora visibility) — **without touching the orchestrator's dispatch loop or
+synthesis's assembly**. The only edits outside the new files are one line in `REGISTRY`,
+the guardrail/prompt widening the domain to say "space science" instead of "near-Earth
+objects", and the version bumps that widening implies.
+
+**Files:** new `data/noaa_swpc.py` (keyless NOAA client), `calc/space_weather.py`
+(deterministic core), `agents/space_weather_agent.py` (LLM-free), `domains/space_weather.py`
+(the `Vertical` + its `contribute`); edits to `data/models.py`, `calc/models.py`,
+`domains/registry.py`, `prompts/system_prompts.py` (orchestrator v2, synthesis v3) and the
+two agents that import those prompts; new `tests/unit/test_space_weather.py` (21 tests) +
+`test_registry.py` count updates.
+
+### Lessons
+
+- **The registry earned its keep.** Adding a domain was: write a data client + core + agent,
+  declare a `Vertical`, append it to `REGISTRY`. The three framing agents (orchestrator,
+  guardrail, synthesis) picked it up with zero changes to their logic — exactly the "config,
+  not surgery" promise from Phase 0. The `contribute` hook (dormant while only NEO existed)
+  ran for real for the first time.
+- **Not every agent needs an LLM.** The litmus test for a domain is "deterministic core, or
+  fetch-and-describe?". Space weather has a real core: Kp → NOAA G-scale is a fixed
+  threshold table, and the aurora view-line is a near-perfectly-linear fit to SWPC's table
+  (66.5° at Kp0 down to 48.1° at Kp9, ~2.04°/Kp). So `SpaceWeatherAgent` makes **no model
+  call at all** — it fetches Kp and computes. Cheaper, faster, and impossible to hallucinate
+  through. It still implements `BaseAgent`, so the orchestrator dispatches it identically;
+  it just accepts-and-ignores the shared Anthropic client the factory hands it.
+- **`contribute` keeps the anti-hallucination discipline.** The section, its table rows, the
+  grounding block, and the citation are all assembled in Python from the typed
+  `SpaceWeatherAssessment` — no LLM prose in the facts. The grounding is *fed to* the
+  synthesis model so a pure space-weather query still gets a grounded executive summary, but
+  the model only narrates; every number is Python's.
+- **A prompt change is a version bump.** Widening the orchestrator's role from "near-Earth
+  object" to "space-science" tool (and adding the `assess_space_weather` tool description),
+  and letting synthesis discuss non-NEO grounding, are behavioural changes — so
+  `orchestrator-v1 → v2` and `synthesis-v2 → v3` per this module's own traceability rule.
+  Tests read the version *constant*, not a hard-coded string, so they didn't break.
+- **Validate the feed at the edge, keyless.** NOAA SWPC needs no API key and isn't on NASA's
+  rate limiter, so the client takes neither `Settings` nor `NasaRateLimiter` — a reminder
+  that the shared HTTP layer (timeouts, retries) is reusable independently of the NASA-key
+  plumbing.
+- **Verify the live shape; don't trust a stale note.** The plan note said the Kp product was
+  an "array of arrays" with a header row. The live endpoint is actually an **array of
+  objects** (`{"time_tag", "Kp", …}`, newest last). One read-only `curl` before writing the
+  parser saved a wrong `KpReading` shape and a fixture that wouldn't mirror production. The
+  "newest last" ordering is correctness-critical — it's why `KpIndexReport.latest` is the
+  tail, and the offline test pins it (feed `[0.33, 5.67]` → latest `5.67`).
+- **Modelling choice: linear fit over a lookup table.** The aurora view-line could have been
+  a 10-row Kp→latitude table; instead it's `66.5 − 2.044·Kp`, because SWPC's table *is*
+  essentially that line (checked: it reproduces 66.5/60.4/56.3/48.1 at Kp 0/3/5/9 to one
+  decimal). A one-line formula with a documented source beats a table to transcribe wrong,
+  and it interpolates fractional Kp (readings come in thirds) for free. Clamped to 0–9.
+- **Test the new domain offline at every layer.** `test_space_weather.py` exercises all four
+  additions without network or an API key: the core via parametrised known values, the
+  client parser + fetch via httpx `MockTransport`, the agent end-to-end (success, HTTP
+  failure, empty feed) by monkeypatching `get_async_client`, and `contribute` both ways
+  (populated blackboard → full block; empty → `None`). Same offline discipline as the NEO
+  agents, so the whole vertical stays in the fast unit suite.
+
+---
+
 ## 2026-07-02 — Domain registry: generalise the framework, specialise the verticals
 
 **Why:** NeoWatch was hard-wired to near-Earth objects in *three* layers, not one — the

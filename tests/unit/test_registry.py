@@ -37,6 +37,7 @@ def test_orchestrator_tools_match_the_neo_capabilities() -> None:
         "analyze_orbits",
         "search_literature",
         "fetch_images",
+        "assess_space_weather",
     ]
     # Every tool carries a description and an object input schema (Claude contract).
     for tool in orchestrator_tools():
@@ -52,11 +53,13 @@ def test_capability_map_keys_and_cache_keys() -> None:
         "analyze_orbits",
         "search_literature",
         "fetch_images",
+        "assess_space_weather",
     }
     assert caps["fetch_neo_data"].cache_key == "neo_data"
     assert caps["analyze_orbits"].cache_key == "orbital_report"
     assert caps["search_literature"].cache_key == "papers"
     assert caps["fetch_images"].cache_key == "images"
+    assert caps["assess_space_weather"].cache_key == "space_weather"
 
 
 def test_summaries_are_defensive_on_unexpected_data() -> None:
@@ -92,8 +95,12 @@ def test_domain_topics_are_deduped_and_include_neo_terms() -> None:
     assert len(topics) == len(set(topics))  # de-duplicated
 
 
-def test_neo_vertical_uses_the_bespoke_synthesis_path() -> None:
-    """The NEO vertical contributes no generic section (it renders bespoke)."""
-    assert contributions() == []  # only NEO is registered, and its contribute is None
-    assert len(REGISTRY) == 1
-    assert len(all_capabilities()) == 4
+def test_registry_holds_neo_and_space_weather() -> None:
+    """NEO renders bespoke (contribute=None); space weather uses the generic hook."""
+    names = {v.name for v in REGISTRY}
+    assert names == {"near-earth-objects", "space-weather"}
+    assert len(REGISTRY) == 2
+    assert len(all_capabilities()) == 5
+    # NEO opts out of the generic section path; space weather opts in — so exactly
+    # one contribution function is registered (proving the hook is wired, not empty).
+    assert len(contributions()) == 1

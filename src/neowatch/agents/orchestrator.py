@@ -32,7 +32,7 @@ from ..domains.registry import capability_map, orchestrator_tools
 from ..guardrails.domain import DomainGuardrail
 from ..guardrails.token_budget import TokenBudgetGuardrail
 from ..llm import get_anthropic_client
-from ..prompts.system_prompts import ORCHESTRATOR_V1
+from ..prompts.system_prompts import ORCHESTRATOR_V2
 from .base import BaseAgent
 
 _MAX_ITERATIONS = 6
@@ -121,7 +121,7 @@ class OrchestratorAgent(BaseAgent):
                 model=self.settings.sonnet_model,
                 max_tokens=2048,
                 temperature=0.2,  # low: planning should be near-deterministic
-                system=ORCHESTRATOR_V1,
+                system=ORCHESTRATOR_V2,
                 tools=cast("list[ToolParam]", self._tools),
                 messages=cast("list[MessageParam]", messages),
             )

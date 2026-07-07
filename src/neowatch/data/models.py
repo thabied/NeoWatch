@@ -199,3 +199,29 @@ class SpaceWeatherReport(_ApiModel):
     flares: list[SpaceWeatherEvent] = Field(default_factory=list)
     cmes: list[SpaceWeatherEvent] = Field(default_factory=list)
     storms: list[SpaceWeatherEvent] = Field(default_factory=list)
+
+
+# --- NOAA SWPC (planetary K-index) -------------------------------------------
+
+
+class KpReading(_ApiModel):
+    """One planetary K-index observation from NOAA SWPC.
+
+    ``kp`` reads NOAA's ``Kp`` JSON key (aliased). The raw feed also carries
+    ``a_running`` and ``station_count``, which ``extra="ignore"`` drops — we keep
+    only the fields the deterministic core consumes.
+    """
+
+    time_tag: str
+    kp: float = Field(alias="Kp")
+
+
+class KpIndexReport(_ApiModel):
+    """A time-ordered series of Kp readings (oldest first, as NOAA returns them)."""
+
+    readings: list[KpReading] = Field(default_factory=list)
+
+    @property
+    def latest(self) -> KpReading | None:
+        """The most recent reading — NOAA appends newest last, so it's the tail."""
+        return self.readings[-1] if self.readings else None

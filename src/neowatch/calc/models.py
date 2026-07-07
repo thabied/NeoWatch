@@ -59,3 +59,23 @@ class OrbitalReport(BaseModel):
     risks: list[RiskAssessment] = Field(default_factory=list)
     anomalies: list[str] = Field(default_factory=list, description="object_ids flagged as outliers")
     narrative: str = ""
+
+
+class SpaceWeatherAssessment(BaseModel):
+    """Deterministic space-weather reading, all fields derived from one Kp value.
+
+    Like ``OrbitalAnalysis``, this is a pure-code product: the Kp comes from NOAA,
+    and the NOAA G-scale band and aurora-visibility latitude are computed by
+    ``neowatch.calc.space_weather``. ``summary`` is assembled in Python too (no
+    LLM), so the space-weather vertical needs no model call at all.
+    """
+
+    time_tag: str
+    kp: float = Field(description="Planetary K-index, 0-9.")
+    g_scale: str = Field(description="NOAA geomagnetic storm scale: G0 (none) - G5 (extreme).")
+    storm_level: str = Field(description="none | minor | moderate | strong | severe | extreme")
+    is_storm: bool = Field(description="True when Kp >= 5 (G1 or stronger).")
+    aurora_latitude_deg: float = Field(
+        description="Equatorward geomagnetic latitude aurora may reach at this Kp."
+    )
+    summary: str = Field(description="Deterministic one-line plain-English summary.")
