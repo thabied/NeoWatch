@@ -12,6 +12,77 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-07-09 — Earth-events vertical: the template pays off (and where the seam bends)
+
+**Why:** The second pluggable domain (Phase 2) — current natural events on Earth (wildfires,
+volcanoes, severe storms, floods…) from NASA's keyless EONET feed. The goal this time was
+not to prove the seam holds (space weather did that) but to see whether the *second* vertical
+is genuinely a fill-in-the-template job. It nearly is: `earth_events.py` and `space_weather.py`
+are structurally almost identical. The interesting part is the two places the domain's own
+shape pushed back.
+
+**Files:** new `data/eonet.py` (keyless EONET client), `calc/geo.py` (deterministic geospatial
+core: haversine, point extraction, active filtering, hotspot), `agents/earth_events_agent.py`
+(LLM-free), `domains/earth_events.py` (the `Vertical` + its `contribute`); edits to
+`data/models.py`, `calc/models.py`, `domains/registry.py`, `prompts/system_prompts.py`
+(orchestrator v3, synthesis v4) and the two agents that import those prompts; new
+`tests/unit/test_earth_events.py` (15 tests) + `test_registry.py` count updates. 133 tests green.
+
+### Lessons
+
+- **The second vertical confirmed the template — copy, don't invent.** Building it was
+  mechanical: mirror the space-weather files, swap the client/core/tool, append one line to
+  `REGISTRY`. The framing agents were again untouched. When the *n*-th instance of a pattern
+  looks boring to write, the abstraction is right. The `contribute` hooks now number two, so
+  the "exactly one contribution registered" registry test became "exactly two".
+
+- **The dispatch seam has a real limit: agents get `context`, not tool arguments.** I wanted
+  "events near <a place the user named>", which needs a reference lat/lon. But the orchestrator's
+  `_dispatch` calls every agent as `agent.run(context)` — it never threads the tool call's
+  `input` args through. Supporting a parameterised tool would mean editing the dispatch loop,
+  i.e. *surgery on the framing layer* — the exact thing the registry exists to avoid. Rather
+  than bend the framework for one vertical, I designed the domain to need no arguments. Noted
+  for later: if two+ verticals want parameters, that's the signal to generalise dispatch, not
+  before.
+
+- **No user reference point? Make the deterministic core relate the data to itself.** Haversine
+  needs two points. With no user location, the honest fully-computed product is a *global*
+  summary plus a **hotspot found by comparing events to each other**: an O(n²) sweep picks the
+  event with the most active neighbours within 500 km. On the live feed this correctly surfaced
+  "35 wildfires clustered near the US Four Corners" out of 200 events — a real, useful,
+  zero-hallucination figure. Avoiding an LLM-produced reference latitude also kept the core
+  honestly deterministic: no model-invented number ever enters a "computed" field.
+
+- **"Empty" is domain-specific — sometimes it's an answer, not a failure.** The space-weather
+  agent fails when there's no Kp reading (there's nothing to assess). But zero active Earth
+  events is a *valid* result — "all quiet" — so `EarthEventsAgent` returns `success=True` with
+  `total_active=0` and a "no significant events" summary. Copying the template blindly would
+  have made a calm planet look like a broken API. The only real failure here is not being able
+  to *fetch* the feed.
+
+- **GeoJSON coordinates are `[lon, lat]`, and `type` changes the nesting.** Two edge traps the
+  live curl exposed before I wrote the parser (Phase 1's "verify live, don't trust the note"
+  lesson, applied again): (1) EONET is GeoJSON order — longitude first — so `event_point`
+  swaps to return `(lat, lon)`; getting this wrong silently plots everything in the wrong
+  hemisphere. (2) A `Point`'s coordinates are `[lon, lat]` but a `Polygon`'s are nested rings
+  `[[[lon,lat],…]]`, so I kept `coordinates: list[Any]` raw at the edge and let the core
+  descend to the first numeric pair (polygons → first vertex, a representative point). Don't
+  over-fit a Pydantic schema to a union-typed field; validate loosely, interpret in the core.
+
+- **Count the *primary* category, not every category.** An EONET event can carry more than one
+  category, so tallying them all makes the per-category counts sum to *more* than
+  `total_active` — a table that doesn't add up. I count only each event's first category, so
+  the breakdown reconciles with the headline number. Small modelling call, but the kind that
+  quietly erodes trust in a report if you get it wrong (like Phase 1's choice of a linear
+  aurora fit over a lookup table — pick the representation that stays coherent downstream).
+
+- **The whole thing was live-smoked, not just unit-tested.** The 15 unit tests run against a
+  hand-built fixture; a hand-built fixture can encode my *assumptions* about the feed. So I
+  also ran the real agent against live EONET once — 200 events, real polygons and magnitudes,
+  parsed clean, hotspot sane. Fixture tests prove the logic; one live run proves the fixture.
+
+---
+
 ## 2026-07-07 — Space-weather vertical: the first pluggable domain
 
 **Why:** Phase 0 built the registry seam; this is the first proof it pays off. We added a

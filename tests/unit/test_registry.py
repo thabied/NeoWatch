@@ -38,6 +38,7 @@ def test_orchestrator_tools_match_the_neo_capabilities() -> None:
         "search_literature",
         "fetch_images",
         "assess_space_weather",
+        "find_earth_events",
     ]
     # Every tool carries a description and an object input schema (Claude contract).
     for tool in orchestrator_tools():
@@ -54,12 +55,14 @@ def test_capability_map_keys_and_cache_keys() -> None:
         "search_literature",
         "fetch_images",
         "assess_space_weather",
+        "find_earth_events",
     }
     assert caps["fetch_neo_data"].cache_key == "neo_data"
     assert caps["analyze_orbits"].cache_key == "orbital_report"
     assert caps["search_literature"].cache_key == "papers"
     assert caps["fetch_images"].cache_key == "images"
     assert caps["assess_space_weather"].cache_key == "space_weather"
+    assert caps["find_earth_events"].cache_key == "earth_events"
 
 
 def test_summaries_are_defensive_on_unexpected_data() -> None:
@@ -92,15 +95,16 @@ def test_domain_topics_are_deduped_and_include_neo_terms() -> None:
     topics = domain_topics()
     assert "asteroids" in topics
     assert "space weather" in topics
+    assert "wildfires" in topics
     assert len(topics) == len(set(topics))  # de-duplicated
 
 
-def test_registry_holds_neo_and_space_weather() -> None:
-    """NEO renders bespoke (contribute=None); space weather uses the generic hook."""
+def test_registry_holds_all_three_verticals() -> None:
+    """NEO renders bespoke (contribute=None); space weather + Earth events opt in."""
     names = {v.name for v in REGISTRY}
-    assert names == {"near-earth-objects", "space-weather"}
-    assert len(REGISTRY) == 2
-    assert len(all_capabilities()) == 5
-    # NEO opts out of the generic section path; space weather opts in — so exactly
-    # one contribution function is registered (proving the hook is wired, not empty).
-    assert len(contributions()) == 1
+    assert names == {"near-earth-objects", "space-weather", "earth-events"}
+    assert len(REGISTRY) == 3
+    assert len(all_capabilities()) == 6
+    # NEO opts out of the generic section path; the two newer verticals opt in — so
+    # exactly two contribution functions are registered (the hook is wired, not empty).
+    assert len(contributions()) == 2

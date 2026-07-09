@@ -79,3 +79,43 @@ class SpaceWeatherAssessment(BaseModel):
         description="Equatorward geomagnetic latitude aurora may reach at this Kp."
     )
     summary: str = Field(description="Deterministic one-line plain-English summary.")
+
+
+class CategoryCount(BaseModel):
+    """How many active events fall under one EONET category."""
+
+    category: str
+    count: int
+
+
+class EventHotspot(BaseModel):
+    """The most concentrated region of active events, found via haversine distance.
+
+    ``latitude``/``longitude`` are the coordinates of the event with the most
+    neighbours within ``radius_km``; ``event_count`` includes that centre event.
+    """
+
+    latitude: float
+    longitude: float
+    radius_km: float
+    event_count: int
+    dominant_category: str
+
+
+class EarthEventsAssessment(BaseModel):
+    """Deterministic summary of the current active-natural-event picture.
+
+    Like ``SpaceWeatherAssessment``, every field is computed in pure code from the
+    EONET feed by ``neowatch.calc.geo`` — counts, the category breakdown, and the
+    haversine-derived hotspot — and ``summary`` is assembled in Python, so the
+    Earth-events vertical needs no model call.
+    """
+
+    total_active: int = Field(description="Number of currently-active events (closed is null).")
+    categories: list[CategoryCount] = Field(
+        default_factory=list, description="Active-event counts by category, most common first."
+    )
+    hotspot: EventHotspot | None = Field(
+        default=None, description="Where active events cluster most tightly (None if none located)."
+    )
+    summary: str = Field(description="Deterministic one-line plain-English summary.")

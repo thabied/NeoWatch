@@ -28,7 +28,7 @@ from ..domains.base import DomainContribution
 from ..domains.registry import contributions
 from ..guardrails.factcheck import FactCheckLayer, build_grounding_context
 from ..llm import get_anthropic_client
-from ..prompts.system_prompts import SYNTHESIS_V3, SYNTHESIS_VERSION
+from ..prompts.system_prompts import SYNTHESIS_V4, SYNTHESIS_VERSION
 from ..rag.models import RetrievedPaper
 from .base import BaseAgent
 from .models import (
@@ -142,7 +142,7 @@ class SynthesisAgent(BaseAgent):
                 model=self.settings.sonnet_model,
                 max_tokens=4096,
                 temperature=0.4,  # a little warmth for readable prose, still grounded
-                system=SYNTHESIS_V3,
+                system=SYNTHESIS_V4,
                 messages=[{"role": "user", "content": grounding}],
                 output_format=ProseModel,
             )

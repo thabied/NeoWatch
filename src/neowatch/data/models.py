@@ -225,3 +225,48 @@ class KpIndexReport(_ApiModel):
     def latest(self) -> KpReading | None:
         """The most recent reading — NOAA appends newest last, so it's the tail."""
         return self.readings[-1] if self.readings else None
+
+
+# --- NASA EONET (Earth Observatory Natural Event Tracker) --------------------
+
+
+class EonetCategory(_ApiModel):
+    """One event category (e.g. ``{"id": "wildfires", "title": "Wildfires"}``)."""
+
+    id: str
+    title: str
+
+
+class EonetGeometry(_ApiModel):
+    """One position (and optional magnitude) of an event at a point in time.
+
+    ``coordinates`` is kept as raw JSON because its shape depends on ``type``: a
+    ``Point`` is ``[lon, lat]`` while a ``Polygon`` nests coordinate rings. The
+    deterministic core (``neowatch.calc.geo``) extracts a representative point,
+    so we do not over-fit a schema to every GeoJSON variant here. ``magnitude_*``
+    is often absent (e.g. severe storms carry no magnitude), hence nullable.
+    """
+
+    date: str
+    type: str
+    coordinates: list[Any] = Field(default_factory=list)
+    magnitude_value: float | None = Field(default=None, alias="magnitudeValue")
+    magnitude_unit: str | None = Field(default=None, alias="magnitudeUnit")
+
+
+class EonetEvent(_ApiModel):
+    """One natural event. ``closed`` is ``None`` while the event is still active."""
+
+    id: str
+    title: str
+    description: str | None = None
+    link: str
+    closed: str | None = None
+    categories: list[EonetCategory] = Field(default_factory=list)
+    geometry: list[EonetGeometry] = Field(default_factory=list)
+
+
+class EonetEventReport(_ApiModel):
+    """The EONET ``/events`` payload: a list of events under the ``events`` key."""
+
+    events: list[EonetEvent] = Field(default_factory=list)
