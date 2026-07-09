@@ -81,6 +81,19 @@ core: haversine, point extraction, active filtering, hotspot), `agents/earth_eve
   also ran the real agent against live EONET once — 200 events, real polygons and magnitudes,
   parsed clean, hotspot sane. Fixture tests prove the logic; one live run proves the fixture.
 
+- **A green test suite hid a real bug that only live data revealed: `limit=200`.** During
+  end-to-end testing the report said "200 active natural events" — suspiciously *exactly* the
+  fetch limit. It was: EONET has ~6832 "open" events (it leaves an event open until a source
+  closes it, so a year-old wildfire nobody closed still counts), returned **newest-first**. So
+  `limit=200` silently kept only the 200 most-recent events, and every aggregate — the count,
+  the category mix, the hotspot — was computed over that biased slice. The unit tests never
+  caught it because a 5-event fixture never hits the cap. Two lessons folded into one: (1) when
+  a headline number equals a config constant, be suspicious; (2) the fix wasn't "raise the
+  limit" — the *semantic* filter is EONET's `days` param: `days=30` returns events with
+  activity in the last 30 days (~130), a defensible definition of "happening now", with `limit`
+  demoted to a mere safety guard well above that. Pinned with a test that asserts the request
+  actually carries `days`. This is precisely what live-smoking is *for*.
+
 ---
 
 ## 2026-07-07 — Space-weather vertical: the first pluggable domain

@@ -169,6 +169,26 @@ async def test_get_earth_events_offline() -> None:
     assert len(report.events) == 5
 
 
+async def test_get_earth_events_filters_to_a_recent_window() -> None:
+    """The request must carry ``days`` so it fetches the current picture, not the
+    full multi-thousand-event open backlog (EONET returns newest-first, so a bare
+    ``limit`` would keep only the most recent slice and bias the counts/hotspot)."""
+    seen: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.update(request.url.params)
+        return httpx.Response(200, json=_EONET_PAYLOAD)
+
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    async with client:
+        await get_earth_events(client)
+    assert seen["status"] == "open"
+    assert int(seen["days"]) > 0
+    # The safety limit must sit well above the recent-window count so it never
+    # silently truncates (which is what the original limit=200 bug did).
+    assert int(seen["limit"]) >= 500
+
+
 # --- LLM-free agent -----------------------------------------------------------
 
 
