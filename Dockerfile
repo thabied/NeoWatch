@@ -10,16 +10,24 @@ RUN apt-get update \
     && apt-get install -y --no-install-recommends libgomp1 \
     && rm -rf /var/lib/apt/lists/*
 
-WORKDIR /app
+# Hugging Face Spaces runs the container as non-root UID 1000 ("user"). Create
+# that user and work under its writable home so the app can persist its runtime
+# dirs (.chroma vector store, .image_cache) — under root-owned /app those writes
+# would be permission-denied and the app would crash on the first query.
+RUN useradd -m -u 1000 user
+USER user
+ENV HOME=/home/user \
+    PATH=/home/user/.local/bin:$PATH
+WORKDIR /home/user/app
 
 # Install dependencies first so this layer is cached across code-only changes.
-COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+COPY --chown=user requirements.txt ./
+RUN pip install --no-cache-dir --user -r requirements.txt
 
 # Install the package itself (src layout) so `neowatch` is importable.
-COPY pyproject.toml ./
-COPY src/ ./src/
-RUN pip install --no-cache-dir -e .
+COPY --chown=user pyproject.toml ./
+COPY --chown=user src/ ./src/
+RUN pip install --no-cache-dir --user -e .
 
 # Gradio must bind all interfaces inside the container, on the Spaces port.
 ENV GRADIO_SERVER_NAME=0.0.0.0 \
