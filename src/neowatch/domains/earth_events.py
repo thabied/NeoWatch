@@ -25,6 +25,9 @@ from ..agents.models import Citation, ReportSection
 from ..calc.models import EarthEventsAssessment
 from ..config import Settings
 from ..context import AgentContext
+from ..watch.rules_earth_events import RULES as _WATCH_RULES
+from ..watch.rules_earth_events import extract as _watch_extract
+from ..watch.spec import WatchSpec
 from .base import Capability, DomainContribution, Vertical
 
 _FIND_TOOL: dict[str, Any] = {
@@ -125,4 +128,6 @@ EARTH_EVENTS_VERTICAL = Vertical(
         ),
     ),
     contribute=_contribute,
+    # EONET refreshes roughly daily, so re-checking more often than that is wasteful.
+    watch=WatchSpec(extract=_watch_extract, rules=_WATCH_RULES, cadence_seconds=86_400),
 )

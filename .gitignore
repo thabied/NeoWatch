@@ -28,6 +28,8 @@ htmlcov/
 .chroma/
 # resized APOD images, re-downloaded on demand
 .image_cache/
+# watch-loop state: per-vertical snapshots + alerts.jsonl audit (re-derived on tick)
+.watch_state/
 *.log
 
 # --- OS / editor ---

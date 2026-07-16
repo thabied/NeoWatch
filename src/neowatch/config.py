@@ -47,6 +47,16 @@ class Settings(BaseSettings):
     token_budget_per_session: int = 200_000
     max_tokens_per_agent: int = 4096
 
+    # --- Watch loop (recurring, stateful outer loop) ---
+    # Where per-vertical snapshots + the alerts.jsonl audit live (git-ignored).
+    watch_state_dir: str = ".watch_state"
+    # How often the in-process loop re-checks each domain. 3h suits the sources:
+    # NOAA Kp updates ~3-hourly, EONET refreshes ~daily.
+    watch_interval_seconds: int = 10_800
+    # Per-domain alert thresholds (policy tunables, not mechanism).
+    watch_kp_alert_gscale: str = "G1"
+    watch_events_active_threshold: int = 50
+
     # --- Local paths / logging ---
     chroma_persist_dir: str = ".chroma"
     # Where resized APOD images are written. The Gradio server must be told to

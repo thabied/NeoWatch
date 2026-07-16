@@ -58,6 +58,11 @@ def contributions() -> list[ContributeFn]:
     return [v.contribute for v in REGISTRY if v.contribute is not None]
 
 
+def watched_verticals() -> tuple[Vertical, ...]:
+    """The verticals that declare a ``WatchSpec`` (the watch loop's targets)."""
+    return tuple(v for v in REGISTRY if v.watch is not None)
+
+
 __all__ = [
     "REGISTRY",
     "Capability",
@@ -68,4 +73,5 @@ __all__ = [
     "contributions",
     "domain_topics",
     "orchestrator_tools",
+    "watched_verticals",
 ]

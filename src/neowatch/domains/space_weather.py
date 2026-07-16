@@ -26,6 +26,9 @@ from ..agents.space_weather_agent import SpaceWeatherAgent
 from ..calc.models import SpaceWeatherAssessment
 from ..config import Settings
 from ..context import AgentContext
+from ..watch.rules_space_weather import RULES as _WATCH_RULES
+from ..watch.rules_space_weather import extract as _watch_extract
+from ..watch.spec import WatchSpec
 from .base import Capability, DomainContribution, Vertical
 
 _ASSESS_TOOL: dict[str, Any] = {
@@ -106,4 +109,6 @@ SPACE_WEATHER_VERTICAL = Vertical(
         ),
     ),
     contribute=_contribute,
+    # NOAA publishes Kp roughly every 3 hours, so that is the natural re-check cadence.
+    watch=WatchSpec(extract=_watch_extract, rules=_WATCH_RULES, cadence_seconds=10_800),
 )

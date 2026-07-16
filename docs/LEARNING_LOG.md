@@ -12,6 +12,202 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-07-16 — Watch loop Phase C: the loop, drivers, and sinks (the outer harness)
+
+**Why:** Phase B built an idempotent tick; Phase C wraps it in a real recurring loop,
+exposes both drivers (in-process `--interval` and one-shot `--once` for external
+schedulers), and routes alerts to pluggable sinks. This is the harness/scheduling phase —
+the *mechanism* around the *policy*. Verified live: a real `--dry-run` against NOAA + EONET
+surfaced "147 active Earth events → surge + hotspot" and wrote nothing to disk.
+
+**Files:** new `watch/sinks.py` (`AlertSink` Protocol + `LogSink`, `JsonlSink`),
+`watch/__main__.py` (argparse CLI). Edits: `watch/runner.py` (`tick` gained `sinks`/`persist`
++ `_emit`; new `run_forever`), `README.md` ("Running the watcher"), new `docs/WATCH_RUNBOOK.md`.
+New tests: `test_watch_sinks.py` (4), `test_watch_loop.py` (6, incl. CLI). 173 unit tests green
+offline, ruff + mypy clean.
+
+### Lessons
+
+- **`CancelledError` is a `BaseException`, and that fact *is* the clean-shutdown design.**
+  `run_forever` guards each tick with `except Exception` so a transient failure is logged and
+  the loop sleeps and retries — its whole reason to exist is availability. The subtlety: since
+  Python 3.8, `asyncio.CancelledError` inherits from `BaseException`, *not* `Exception`, so it
+  slips straight past that guard and unwinds to an outer `except asyncio.CancelledError` that
+  logs "stopped" and re-raises. So "keep running on errors" and "stop cleanly on cancel" aren't
+  two competing behaviours fighting over one `except` — the exception *hierarchy* separates them
+  for free. Get the base class wrong (catch `BaseException`, or catch `Exception` too greedily)
+  and cancellation silently turns into an infinite loop you can't Ctrl-C.
+
+- **A sink is the seam that keeps the loop from knowing about the world.** The tick decides
+  *which* alerts fired; sinks decide *what happens* to them (log line, JSONL audit, later an LLM
+  digest). Defining `AlertSink` as a `Protocol` means a sink doesn't inherit anything — any object
+  with `emit(alerts)` qualifies (structural typing), so `LogSink` and `JsonlSink` share no base
+  and a test's `_RecordingSink` is a valid sink with zero ceremony. New destinations are *added*,
+  never wired into the loop — the same "declare, don't edit" spirit as the vertical registry, one
+  layer out.
+
+- **Error isolation recurs at every layer — now the sinks.** Phase B isolated each *vertical*
+  inside the tick; Phase C isolates each *sink* inside `_emit` (one raising sink is logged and
+  skipped, the others still receive the batch) and each *tick* inside `run_forever`. Same pattern,
+  three radii: a failure never propagates past the boundary of the thing that failed. A test with
+  a deliberately-throwing `_BadSink` in front of a good one proves the good one still gets its
+  alerts.
+
+- **`persist=False` is what makes a dry run honest.** The plan wanted `--dry-run` to "sense and
+  diff but persist nothing and emit nowhere". Two orthogonal knobs deliver that: pass *no sinks*
+  (nothing emitted) and `persist=False` (no baseline saved). Crucially, a dry run must not save a
+  baseline — otherwise the *next* real run would diff against it and miss the very transition you
+  were inspecting. The live test confirmed `.watch_state/` was never even created. Emission and
+  persistence being separate flags (not one "dry" boolean) keeps each concern independently
+  controllable.
+
+- **The exit code is the API for external schedulers.** `--once` returns `1` when alerts fired,
+  `0` when nothing changed — so cron / GitHub Actions / a Claude Code routine can branch on
+  "did something happen?" without parsing logs. This is the concrete payoff of policy-vs-mechanism:
+  because state is on disk and the tick is idempotent, the *identical* `--once` command runs under
+  four different mechanisms (documented in `WATCH_RUNBOOK.md`) with no code change. The mechanism
+  became a deployment choice, not a code property — which is the entire point of the harness.
+
+- **mypy caught that a two-sink list infers as `list[object]`.** `[LogSink(), JsonlSink(store)]`
+  has no common base (they're structural siblings, not nominal ones), so mypy widened the element
+  type to `object`, which isn't a `Sequence[AlertSink]`. Annotating `sinks: list[AlertSink]` states
+  the intent the Protocol was designed for. A small reminder that structural typing needs an
+  explicit annotation at the *collection* site where inference can't recover the shared shape.
+
+---
+
+## 2026-07-16 — Watch loop Phase B: edge-triggered rules and an idempotent tick
+
+**Why:** The loop's *brain*. Phase A built the memory; Phase B makes two verticals
+watchable and implements `tick()` — one deterministic pass (sense → extract → diff →
+alert → persist). This is the loop-engineering core: edge- vs level-triggering, hysteresis,
+idempotency, and per-vertical error isolation. Still zero LLM in the decision path and still
+fully offline-testable.
+
+**Files:** new `watch/spec.py` (`WatchSpec` descriptor + `AlertRule`/`Signal` types +
+`utc_now_iso`), `watch/rules_space_weather.py` (extract + onset/escalation/cleared),
+`watch/rules_earth_events.py` (extract + surge/hotspot), `watch/runner.py`
+(`WatchRunner.sense_vertical` + `tick`). Edits: `domains/base.py` (optional `watch` field,
+`TYPE_CHECKING` import), `domains/registry.py` (`watched_verticals()`), the two verticals
+(attach a `WatchSpec`). New tests: `test_watch_rules.py` (20 pure), `test_watch_tick.py`
+(idempotency + persistence + error isolation). 163 unit tests green offline, ruff + mypy clean.
+
+### Lessons
+
+- **Edge-triggering is what makes a repeated tick converge instead of spam.** Every rule fires
+  only on a *transition* (not-storm → storm, count crossing a threshold *upward*), never while a
+  condition merely holds. The alternative — level-triggering ("there are ≥50 events") — would
+  re-fire every tick for the whole duration of the event and force you to bolt on cooldown state
+  to shut it up. Edge-triggering gets idempotency for free: persist the new baseline at the end of
+  the tick, and next tick `prev == cur`, so there's no edge and nothing re-fires. The two-tick test
+  (`test_tick_is_idempotent`) is the proof and is the single most important test in the phase.
+
+- **Hysteresis fell out of the data model, not extra code.** The worry with threshold alerts is
+  *flap* — a value hovering on the boundary flipping the alert on/off every tick. Here the NOAA
+  G-scale already quantises Kp into discrete bands (G0..G5), so Kp wobbling between 4.9 and 5.1
+  still reads as one band and never flips `is_storm`. The lesson: when the upstream signal is
+  already banded, you inherit hysteresis; you only hand-roll on/off thresholds when the signal is
+  continuous.
+
+- **"First sight" is a policy decision, and I encoded it as `prev=None` → "below threshold".**
+  The very first tick has no baseline. Treating `None` as "not a storm" / "zero events" means a
+  storm *already raging* when the watcher first boots still alerts exactly once, instead of being
+  silently adopted as the baseline and never mentioned. Each onset/surge rule handles `None`
+  explicitly, and a dedicated test pins it — this is the kind of edge that's invisible until the
+  first real deployment starts mid-event.
+
+- **The plan was wrong about where the assessment lives — and the test caught it.** I'd designed
+  `sense_vertical` to read `session_cache[cache_key]` after running the agent. But the tick test
+  failed with "no assessment parked on the blackboard": an agent returns its payload in
+  `AgentResult.data`; parking it on `session_cache` is the *orchestrator's* `_dispatch` job, which
+  the watcher deliberately bypasses. Fix: read `result.data` directly. Good reminder that "second
+  consumer of the same core" means re-checking exactly which layer owns each side effect — the
+  agent computes, the orchestrator caches, and we only wanted the first.
+
+- **Rules take `Settings`, and that keeps them pure *and* configurable.** The plan sketched
+  `(prev, cur) -> Alert|None`, but two rules need policy thresholds (`watch_kp_alert_gscale`,
+  `watch_events_active_threshold`). Reading settings at *import* time would couple module import to
+  the environment (and break test collection, since the secrets are required). Passing `Settings`
+  as a third argument keeps each rule a pure function of its inputs — `Settings` is immutable data,
+  no I/O — so it's still table-testable (build a `Settings` inline, override one threshold) while
+  the runner threads one settings object through every rule uniformly.
+
+- **Error isolation is a property of the *tick*, not the loop.** People reach for "the loop keeps
+  running on error" (Phase C), but the subtler requirement is that within a single tick, one
+  vertical's failure must not touch another's state. The `try/except … continue` wraps each
+  vertical *before* the `store.save`, so a failed sense skips persistence entirely — the failing
+  domain's baseline is left exactly as it was, never half-written or poisoned. A test drives this
+  by returning HTTP 500 for space-weather while earth-events succeeds, then asserts the
+  space-weather snapshot is still absent and earth-events still alerted.
+
+- **The `watch` hook mirrors `contribute` — including the import-cycle dance.** Adding
+  `watch: WatchSpec | None = None` to the frozen `Vertical` needed the type but not a runtime
+  import (the watch package imports back through the registry). `from __future__ import annotations`
+  turns the annotation into a string, so a `TYPE_CHECKING`-only import satisfies the type checker
+  with zero runtime coupling — the same trick already used for other cross-package types. Watching a
+  new domain stays "declare a Vertical", never "edit the framework".
+
+---
+
+## 2026-07-16 — Watch loop Phase A: state that outlives the process
+
+**Why:** Start of the watch-loop workstream (plan in `WATCH_LOOP_PLAN.md`), chosen to practise
+the two topics the codebase was thin on — **loop engineering** (the *outer* loop, vs the
+orchestrator's inner tool-use loop) and **harness engineering** (state outside the context
+window). Phase A builds *only* the durable substrate: no sensing, no rules, no loop yet — just
+the shapes that get persisted and the crash-safe store that persists them. The discipline was to
+prove durability in isolation, with zero network or LLM, before any diffing logic exists to lean
+on it.
+
+**Files:** new `src/neowatch/watch/` package — `__init__.py` (package thesis), `models.py`
+(`WatchSnapshot`, `Alert`), `store.py` (`WatchStore`); new `tests/unit/test_watch_store.py`
+(8 tests). Edits: `config.py` (+4 watch tunables), `.env.example`, `.gitignore` (`.watch_state/`),
+`test_config.py` (defaults assertion). 140 unit tests green, still fully offline.
+
+### Lessons
+
+- **A watcher's defining feature is memory across runs — so build the memory first.** Every
+  NeoWatch run so far was stateless: request → report → forget. A *watch* has to compare *this*
+  run to the *previous* one, but that previous run's process is long dead. The only thing that
+  survives is what's on disk. So Phase A is deliberately all substrate: get the persisted shapes
+  and the store provably correct in isolation, so later phases can trust "load the baseline" as a
+  primitive rather than debugging durability and diffing at the same time.
+
+- **`os.replace` is the whole atomic-write trick — but the temp file must be a sibling.** `save`
+  writes `foo.json.tmp` then `os.replace(tmp, target)`. `os.replace` is atomic *only* as a rename
+  within one filesystem; a reader therefore sees either the entire old file or the entire new one,
+  never a torn half-write that would poison the next diff. The subtlety worth internalising: the
+  temp file is created next to the target (same dir → same filesystem), not in `/tmp`, precisely
+  so the rename stays a metadata swap and never degrades into a cross-device copy.
+
+- **A fingerprint has to be stable across *processes*, so `hash()` is disqualified.** The snapshot
+  carries a SHA-256 over the signal, canonicalised with `json.dumps(sort_keys=True)`. Two things
+  this buys: a cheap "did anything change at all?" equality token (skip the rules when equal), and
+  order-independence (`{"kp":6,"is_storm":True}` and the reversed-key dict hash identically). I did
+  *not* use Python's builtin `hash()` — it's salted per process (`PYTHONHASHSEED`), so it would give
+  different values on different runs and silently break every cross-restart comparison. A test pins
+  the stability and the order-independence.
+
+- **"Absent" is a first-class state, not an error.** `load` returns `None` for a never-seen
+  vertical instead of raising. That single choice is what lets the (future) rules treat "no baseline
+  yet" as "below threshold" and still alert exactly once on a condition that's *already* active on
+  the first run — the "first sight" policy the plan calls out. Modelling missing-state as a normal
+  value rather than an exception keeps the eventual tick a clean straight-line flow.
+
+- **JSONL for the audit, JSON for the baseline — the shape follows the access pattern.** The
+  baseline is *one* current value per vertical, overwritten each tick → a single JSON file replaced
+  atomically. The audit is an ever-growing *append-only* history → JSONL, one alert per line, so a
+  crash between writes can at worst drop the last line and never corrupt earlier history. Same data
+  library, two serialisation shapes, each matched to how the file is written and read.
+
+- **Policy vs mechanism, planted early in config.** The four new settings split cleanly:
+  `watch_state_dir`/`watch_interval_seconds` are *mechanism* (where/how often), while
+  `watch_kp_alert_gscale`/`watch_events_active_threshold` are *policy* (what counts as alertable).
+  They cost nothing now but stake out the decoupling the later phases depend on — the same `tick()`
+  will run under any mechanism, and the thresholds move without touching the loop.
+
+---
+
 ## 2026-07-09 — Earth-events vertical: the template pays off (and where the seam bends)
 
 **Why:** The second pluggable domain (Phase 2) — current natural events on Earth (wildfires,

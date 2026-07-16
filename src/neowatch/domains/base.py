@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from anthropic import AsyncAnthropic
 
@@ -26,6 +26,13 @@ from ..agents.base import BaseAgent
 from ..agents.models import Citation, ReportSection
 from ..config import Settings
 from ..context import AgentContext
+
+if TYPE_CHECKING:
+    # Imported only for typing: keeps ``base`` free of a runtime dependency on the
+    # watch package (which imports back through the registry), avoiding a cycle.
+    # ``from __future__ import annotations`` makes the field annotation a string,
+    # so the name is never resolved at runtime.
+    from ..watch.spec import WatchSpec
 
 # Builds a vertical's specialist agent. It receives the run's shared Anthropic
 # client so LLM-driven agents reuse one connection pool; agents that need no LLM
@@ -80,9 +87,16 @@ ContributeFn = Callable[[AgentContext], "DomainContribution | None"]
 
 @dataclass(frozen=True)
 class Vertical:
-    """A coherent science domain plugged into the pipeline."""
+    """A coherent science domain plugged into the pipeline.
+
+    ``watch`` is the optional watch-loop hook, mirroring ``contribute``: a vertical
+    that sets it becomes a target of the recurring watcher (``neowatch.watch``); a
+    vertical that leaves it ``None`` is simply never watched. Same "declare a
+    Vertical, don't edit the framework" ethos as every other field here.
+    """
 
     name: str
     topics: tuple[str, ...]
     capabilities: tuple[Capability, ...]
     contribute: ContributeFn | None = None
+    watch: WatchSpec | None = None

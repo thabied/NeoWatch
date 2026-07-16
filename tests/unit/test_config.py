@@ -29,6 +29,11 @@ def test_settings_defaults() -> None:
     assert settings.max_tokens_per_agent == 4096
     assert settings.log_level == "INFO"
     assert settings.serp_api_key is None
+    # Watch-loop tunables fall back to their documented defaults.
+    assert settings.watch_state_dir == ".watch_state"
+    assert settings.watch_interval_seconds == 10_800
+    assert settings.watch_kp_alert_gscale == "G1"
+    assert settings.watch_events_active_threshold == 50
 
 
 def test_settings_reads_environment(monkeypatch: pytest.MonkeyPatch) -> None:

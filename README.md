@@ -110,6 +110,25 @@ cp .env.example .env
 python -m neowatch.main          # launches the Gradio UI on http://localhost:7860
 ```
 
+### Running the watcher
+
+NeoWatch also has a **watch loop**: a recurring, stateful pass that senses each
+domain, diffs against the last run, and raises alerts on what changed. Its
+decisions are fully deterministic (no LLM in the alert path). See
+[`docs/WATCH_LOOP_PLAN.md`](docs/WATCH_LOOP_PLAN.md) for the design.
+
+```bash
+python -m neowatch.watch --once        # one tick, then exit (0 = no alerts, 1 = alerts fired)
+python -m neowatch.watch --dry-run     # sense + diff, but persist nothing and emit nowhere
+python -m neowatch.watch --interval 10800   # in-process loop: tick every 3h until Ctrl-C
+```
+
+State lives under `.watch_state/` (git-ignored): one JSON baseline per domain
+plus an append-only `alerts.jsonl`. Because state is external and each tick is
+idempotent, `--once` can be driven by any external scheduler (cron, GitHub
+Actions, a Claude Code routine) — see
+[`docs/WATCH_RUNBOOK.md`](docs/WATCH_RUNBOOK.md).
+
 ## Test
 
 ```bash
