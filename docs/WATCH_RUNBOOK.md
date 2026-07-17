@@ -18,8 +18,15 @@ python -m neowatch.watch --interval N  # in-process loop: tick every N seconds u
   `.watch_state/alerts.jsonl` (append-only audit). Override the location with
   `WATCH_STATE_DIR`. This on-disk state is what lets separate `--once` runs behave
   as one continuous watch.
-- **Thresholds (policy):** `WATCH_KP_ALERT_GSCALE` (default `G1`) and
-  `WATCH_EVENTS_ACTIVE_THRESHOLD` (default `50`). See `.env.example`.
+- **Thresholds (policy):** `WATCH_KP_ALERT_GSCALE` (default `G1`),
+  `WATCH_EVENTS_ACTIVE_THRESHOLD` (default `50`), and for NEO
+  `WATCH_NEO_HORIZON_DAYS` (default `7`, the close-approach scan window) and
+  `WATCH_NEO_CLOSE_LD` (default `1.0`, the "close approach" distance in lunar
+  distances). See `.env.example`.
+- **Keys:** the space-weather and earth-events verticals are keyless; the **NEO**
+  vertical needs `NASA_API_KEY`. If it is absent the NEO fetch fails and that one
+  vertical is skipped for the tick (logged, baseline untouched) — the keyless
+  domains still run.
 
 ---
 
@@ -119,6 +126,8 @@ Alert keys currently emitted:
 | `space-weather:storm-cleared` | storm → quiet |
 | `earth-events:surge` | active-event count crosses `WATCH_EVENTS_ACTIVE_THRESHOLD` upward |
 | `earth-events:hotspot-onset` | a spatial cluster of events appears where there was none |
+| `near-earth-objects:notable-appeared` | an elevated/high computed-risk object newly enters the scan window |
+| `near-earth-objects:close-approach` | the nearest approach crosses inside `WATCH_NEO_CLOSE_LD` |
 
 Because rules are **edge-triggered**, each fires on the *transition* only — a
 sustained storm or surge alerts once, not every tick.

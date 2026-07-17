@@ -80,7 +80,13 @@ def _wire_feeds(
     *,
     kp_status: int = 200,
 ) -> None:
-    """Point both LLM-free agents at their MockTransport feeds."""
+    """Point the watched verticals at MockTransport feeds so the tick stays offline.
+
+    NEO is now watched too, so it must be wired even here or its deterministic
+    sense would reach the real NASA feed. We give it an *empty* feed: it senses
+    successfully (no objects), raises no alerts, and leaves the space/earth
+    assertions below untouched.
+    """
     monkeypatch.setattr(
         "neowatch.agents.space_weather_agent.get_async_client",
         lambda: _client_returning(_STORM_KP_FEED, status=kp_status),
@@ -88,6 +94,10 @@ def _wire_feeds(
     monkeypatch.setattr(
         "neowatch.agents.earth_events_agent.get_async_client",
         lambda: _client_returning(_CLUSTER_EONET_FEED),
+    )
+    monkeypatch.setattr(
+        "neowatch.watch.rules_neo.get_async_client",
+        lambda: _client_returning({"near_earth_objects": {}}),
     )
 
 

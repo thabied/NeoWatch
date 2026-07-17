@@ -26,6 +26,10 @@ from ..agents.image_agent import ImageAgent
 from ..agents.models import NEOData
 from ..agents.rag_agent import RAGAgent
 from ..config import Settings
+from ..watch.rules_neo import RULES as _WATCH_RULES
+from ..watch.rules_neo import neo_extract as _watch_extract
+from ..watch.rules_neo import neo_sense as _watch_sense
+from ..watch.spec import WatchSpec
 from .base import Capability, Vertical
 
 # Each specialist is surfaced to the planner as a tool with an empty input schema:
@@ -136,4 +140,14 @@ NEO_VERTICAL = Vertical(
         ),
     ),
     contribute=None,
+    # The watcher does NOT reuse the LLM-driven fetch/calc agents above: it
+    # declares a deterministic ``sense`` (NASA feed + pure calc cores, no model)
+    # so the recurring loop stays cheap and diffs a stable object set. NeoWs
+    # publishes new close approaches ~daily, so a daily re-check cadence fits.
+    watch=WatchSpec(
+        extract=_watch_extract,
+        rules=_WATCH_RULES,
+        cadence_seconds=86_400,
+        sense=_watch_sense,
+    ),
 )

@@ -73,20 +73,32 @@ class WatchRunner:
         self.logger: FilteringBoundLogger = logger or structlog.get_logger("neowatch.watch")
 
     async def sense_vertical(self, vertical: Vertical) -> object:
-        """Run the vertical's agent and return its typed assessment.
+        """Sense one vertical and return its typed assessment for the rules to diff.
 
-        Builds the vertical's first capability's agent (no Anthropic client — the
-        watched verticals are LLM-free), runs it against a throwaway context, and
-        returns the typed assessment from ``AgentResult.data``.
+        Two paths, chosen by whether the vertical's ``WatchSpec`` declares a custom
+        ``sense``:
 
-        Note: an agent returns its payload in ``result.data`` — parking it on
-        ``session_cache`` is the *orchestrator's* job (``_dispatch``), which the
-        watcher deliberately bypasses. So we read ``data`` directly rather than the
-        blackboard.
+        - **Custom sense** (``spec.sense is not None``): await it directly. This is
+          how a domain whose report path does not fit "one agent, read its data"
+          plugs in a bespoke, deterministic sense — the NEO vertical fetches the
+          NASA feed and runs the pure calc cores this way, with no LLM in the loop.
+        - **Default path**: build the vertical's first capability agent (no
+          Anthropic client — the default-path verticals are LLM-free), run it
+          against a throwaway context, and read the typed assessment from
+          ``AgentResult.data``. (An agent returns its payload in ``result.data`` —
+          parking it on ``session_cache`` is the *orchestrator's* job, which the
+          watcher bypasses, so we read ``data`` directly rather than the blackboard.)
 
         Raises:
-            WatchSenseError: if the agent reports failure or returns no payload.
+            WatchSenseError: if sensing fails or yields no assessment.
         """
+        spec = vertical.watch
+        if spec is not None and spec.sense is not None:
+            assessment = await spec.sense(self.settings)
+            if assessment is None:
+                raise WatchSenseError(f"{vertical.name}: custom sense returned no assessment")
+            return assessment
+
         capability = vertical.capabilities[0]
         agent = capability.build_agent(self.settings, None)
         context = AgentContext(query=f"[watch] {vertical.name}")

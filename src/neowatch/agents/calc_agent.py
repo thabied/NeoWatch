@@ -15,10 +15,9 @@ from anthropic import AsyncAnthropic
 from structlog.typing import FilteringBoundLogger
 
 from ..calc.models import OrbitalAnalysis, OrbitalReport, RiskAssessment
-from ..calc.orbital import analyse_orbit, assess_risk, detect_anomaly
+from ..calc.orbital import analyse_feed_item, assess_risk, detect_anomaly
 from ..config import Settings
 from ..context import AgentContext, AgentResult
-from ..data.models import NEOFeedItem
 from ..llm import get_anthropic_client
 from .base import BaseAgent
 from .models import NEOData
@@ -54,7 +53,7 @@ class CalcAgent(BaseAgent):
         analyses: list[OrbitalAnalysis] = []
         risks: list[RiskAssessment] = []
         for item in neo_data.feed_items:
-            analysis = _analyse_item(item)
+            analysis = analyse_feed_item(item)
             if analysis is None:
                 continue
             analyses.append(analysis)
@@ -101,20 +100,3 @@ class CalcAgent(BaseAgent):
         if resp.usage is not None:
             context.add_tokens(resp.usage.input_tokens, resp.usage.output_tokens)
         return "".join(block.text for block in resp.content if block.type == "text")
-
-
-def _analyse_item(item: NEOFeedItem) -> OrbitalAnalysis | None:
-    """Build an ``OrbitalAnalysis`` from an item's closest approach (None if absent)."""
-    if not item.close_approach_data:
-        return None
-    closest = min(item.close_approach_data, key=lambda ca: ca.miss_distance.kilometers)
-    meters = item.estimated_diameter.meters
-    return analyse_orbit(
-        object_id=item.id,
-        name=item.name,
-        miss_distance_km=closest.miss_distance.kilometers,
-        velocity_km_s=closest.relative_velocity.kilometers_per_second,
-        diameter_min_m=meters.estimated_diameter_min,
-        diameter_max_m=meters.estimated_diameter_max,
-        is_potentially_hazardous=item.is_potentially_hazardous_asteroid,
-    )

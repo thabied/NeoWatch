@@ -56,6 +56,11 @@ class Settings(BaseSettings):
     # Per-domain alert thresholds (policy tunables, not mechanism).
     watch_kp_alert_gscale: str = "G1"
     watch_events_active_threshold: int = 50
+    # NEO watcher: how many days ahead to scan for close approaches (the sensing
+    # window), and the miss distance (in lunar distances) that counts as a "close
+    # approach" alert. 1.0 LD = inside the Moon's orbit.
+    watch_neo_horizon_days: int = 7
+    watch_neo_close_ld: float = 1.0
 
     # --- Local paths / logging ---
     chroma_persist_dir: str = ".chroma"

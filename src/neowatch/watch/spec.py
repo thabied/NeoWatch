@@ -27,7 +27,7 @@ immutable data, so the rule stays pure and trivially testable.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -43,6 +43,16 @@ ExtractFn = Callable[[Any], Signal]
 
 # A pure edge-detector: (previous signal | None, current signal, settings) -> Alert | None.
 AlertRule = Callable[[Signal | None, Signal, Settings], Alert | None]
+
+# An optional custom "sense" for a vertical: produce the typed assessment the
+# rules will diff, given only the settings. Async because sensing does I/O
+# (a NASA/NOAA fetch). When a WatchSpec leaves this ``None`` the runner uses the
+# default path — build the vertical's first capability agent and read its
+# ``AgentResult.data``. A vertical supplies its own when the default single-agent
+# path does not fit: the NEO vertical does, because its report path is an
+# LLM-driven fetch->calc chain, but the watcher wants a *deterministic* sense
+# (call the fetch client + pure calc cores directly, no model).
+SenseFn = Callable[[Settings], Awaitable[Any]]
 
 
 def utc_now_iso() -> str:
@@ -62,8 +72,12 @@ class WatchSpec:
         extract: Full typed assessment -> tiny JSON-able signal dict.
         rules: Pure edge-detecting rules; each may raise at most one alert.
         cadence_seconds: How often re-checking this domain is worthwhile.
+        sense: Optional custom sensing coroutine. ``None`` (the default) means the
+            runner senses generically via the vertical's first capability agent;
+            set it to run a bespoke, deterministic sense instead (see ``SenseFn``).
     """
 
     extract: ExtractFn
     rules: tuple[AlertRule, ...]
     cadence_seconds: int
+    sense: SenseFn | None = None

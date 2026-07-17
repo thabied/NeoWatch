@@ -113,8 +113,10 @@ python -m neowatch.main          # launches the Gradio UI on http://localhost:78
 ### Running the watcher
 
 NeoWatch also has a **watch loop**: a recurring, stateful pass that senses each
-domain, diffs against the last run, and raises alerts on what changed. Its
-decisions are fully deterministic (no LLM in the alert path). See
+domain, diffs against the last run, and raises alerts on what changed. It watches
+all three verticals — near-Earth objects, space weather, and Earth events — and
+its decisions are fully deterministic (no LLM in the alert path; the NEO watcher
+senses via the NASA feed and the pure calc cores directly). See
 [`docs/WATCH_LOOP_PLAN.md`](docs/WATCH_LOOP_PLAN.md) for the design.
 
 ```bash

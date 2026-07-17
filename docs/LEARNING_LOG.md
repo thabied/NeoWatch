@@ -12,6 +12,78 @@ inline chat narration (see the "Learning mode" section in `PLAN.md`).
 
 ---
 
+## 2026-07-17 — Watch loop Phase D: the NEO watcher (a deterministic sense over a moving window)
+
+**Why:** The two shipped verticals (space-weather, earth-events) are LLM-free single fetches.
+NEO is the hard one — its *report* path is an LLM-driven `FetchAgent → CalcAgent` chain — so it
+was deferred to prove the watch framework can absorb a domain whose normal path doesn't fit
+"one agent, read its data." Building it forced two genuinely new ideas: a **custom sense hook**,
+and **making a diff meaningful when the sensing window itself moves under you**.
+
+**Decision — a deterministic sense, not the LLM chain.** The report pipeline runs `FetchAgent`
+(Haiku picks NASA endpoints) then `CalcAgent` (Haiku narrates). The watcher wants neither model
+call: it reads only the *computed numbers*, and an unattended loop should be cheap, reproducible,
+and — critically — sense the *same* object set run-to-run so the diff means something. So NEO
+declares a bespoke `sense` that calls the `get_neo_feed` client and the pure `analyse_feed_item`
+/ `assess_risk` cores directly, no LLM anywhere. (Chosen over reusing the agent chain, which the
+Phase-D note had sketched; the trade-off write-up lives in the memory + this entry.)
+
+**Files:** new `watch/rules_neo.py` (`neo_sense` + `neo_extract` + rules `notable_appeared`,
+`closest_tightened`). Edits: `watch/spec.py` (new optional `sense: SenseFn`), `watch/runner.py`
+(`sense_vertical` branches on `spec.sense`), `calc/orbital.py` (new public `analyse_feed_item`,
+moved out of `calc_agent.py`), `calc_agent.py` (uses it), `config.py` (`watch_neo_horizon_days`,
+`watch_neo_close_ld`), `domains/neo.py` (attaches the `WatchSpec`), `.env.example`, `README.md`,
+`docs/WATCH_RUNBOOK.md`. New tests: `test_watch_rules_neo.py` (13 pure), `test_watch_neo.py`
+(3 tick), plus `test_watch_tick.py`'s `_wire_feeds` now wires an empty NEO feed. **188 unit tests
+green offline, ruff + mypy clean. Verified live:** a real `--dry-run` senses today's NASA feed
+with no model call.
+
+### Lessons
+
+- **The moving-window trap is the whole NEO lesson.** We scan a rolling "today .. today+N days"
+  window, so as real time advances the window *slides*: objects enter at the far edge and drop off
+  the near edge every day. A naive "alert on every object in the feed" would flap constantly on
+  window mechanics, not on anything astronomical. The fix is to make the rules **window-robust** by
+  being selective and edge-triggered — alert on new *notable* objects (identity set-diff by id) and
+  on the nearest approach crossing a distance threshold, never on raw membership.
+
+- **"New in the sliding window" is not "newly discovered" — so don't trigger on catalog
+  designations.** The first live run caught me: an 81-LD object fired a *warning* purely because it
+  carries NASA's "potentially hazardous" (PHA) flag. But PHA is a permanent orbital *designation*;
+  the same catalog PHAs cycle through a 7-day window endlessly, so a PHA trigger re-fires on distant
+  objects forever. The correction: key notability on the **computed risk band** (`elevated`/`high`),
+  which already folds the PHA flag together with *this pass's* distance and size. Real data, not a
+  unit test, is what exposed this — a good argument for the live `--dry-run` in the loop workflow.
+
+- **A `sense` hook is "policy vs mechanism" one level deeper.** Phase C split *tick policy* from
+  *scheduling mechanism*. NEO splits *what an assessment is* from *how you obtain it*: `WatchSpec`
+  gained an optional `sense` coroutine, and the runner uses it when present, else the default
+  "build `capabilities[0]`, read its data" path. Space-weather/earth-events set nothing and are
+  untouched; NEO plugs in a deterministic fetch. Same "declare a Vertical, don't edit the
+  framework" ethos — the framework grew a seam, not a special case.
+
+- **The watcher as a literal "second consumer of the deterministic core."** To avoid duplicating
+  the feed-item → analysis mapping, I lifted `CalcAgent._analyse_item` into a public
+  `calc.orbital.analyse_feed_item` and pointed *both* the agent and `neo_sense` at it. Now the
+  watcher computes byte-identical figures to the report pipeline with zero LLM-shaped imports —
+  which is exactly the anti-hallucination claim the whole project rests on, demonstrated by reuse
+  rather than restated.
+
+- **Hysteresis, again, falls out of a discrete threshold.** `closest_tightened` fires when the
+  nearest approach crosses *inside* `watch_neo_close_ld` and not again while it stays inside —
+  the same trick the space-weather rules get free from the discrete G-scale bands. Continuous miss
+  distances are quantised by the "≤ threshold?" predicate, so sub-threshold wobble can't flap the
+  alert. Rounding miss distances to milli-LD in `neo_extract` protects the *fingerprint* the same
+  way.
+
+- **Graceful degradation is already built in — NEO just exercises it.** NEO is the first watched
+  vertical that needs `NASA_API_KEY`. If the key is missing or the fetch fails, `neo_sense` raises,
+  and the runner's existing per-vertical isolation logs it and skips NEO without touching its
+  baseline or the keyless domains. A new failure mode needed *no new handling* — the Phase-B error
+  radius already covered it.
+
+---
+
 ## 2026-07-16 — Watch loop Phase C: the loop, drivers, and sinks (the outer harness)
 
 **Why:** Phase B built an idempotent tick; Phase C wraps it in a real recurring loop,

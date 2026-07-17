@@ -15,6 +15,7 @@ from datetime import datetime, timedelta
 
 import numpy as np
 
+from ..data.models import NEOFeedItem
 from .models import OrbitalAnalysis, RiskAssessment
 
 # --- Physical constants -------------------------------------------------------
@@ -194,4 +195,31 @@ def analyse_orbit(
         diameter_min_m=diameter_min_m,
         diameter_max_m=diameter_max_m,
         is_potentially_hazardous=is_potentially_hazardous,
+    )
+
+
+def analyse_feed_item(item: NEOFeedItem) -> OrbitalAnalysis | None:
+    """Reduce one NASA feed item to its closest-approach ``OrbitalAnalysis``.
+
+    A feed item can list several close approaches; we analyse the *closest* one
+    (smallest miss distance). Returns ``None`` when the item carries no approach
+    data at all, so callers can simply skip it.
+
+    This is the pure feed-item -> analysis mapping shared by the two consumers of
+    the deterministic core: the ``CalcAgent`` (report pipeline) and the watch
+    loop's NEO sense. Keeping it here — not inside an agent — is what lets the
+    watcher compute identical figures without importing anything LLM-shaped.
+    """
+    if not item.close_approach_data:
+        return None
+    closest = min(item.close_approach_data, key=lambda ca: ca.miss_distance.kilometers)
+    meters = item.estimated_diameter.meters
+    return analyse_orbit(
+        object_id=item.id,
+        name=item.name,
+        miss_distance_km=closest.miss_distance.kilometers,
+        velocity_km_s=closest.relative_velocity.kilometers_per_second,
+        diameter_min_m=meters.estimated_diameter_min,
+        diameter_max_m=meters.estimated_diameter_max,
+        is_potentially_hazardous=item.is_potentially_hazardous_asteroid,
     )
